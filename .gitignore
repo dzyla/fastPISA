@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# fastPISA runtime outputs
+*.pdb_tmp/
+output/
+out/
+*.xml
+
+# OS
+.DS_Store
+
+# Testing / notebooks
+.ipynb_checkpoints/

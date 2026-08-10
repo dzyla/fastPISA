@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastpisa"
+version = "1.0.0"
+description = "Local PISA interface analysis with an optional COCOMAPS 2.0 contact-map mode"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "dzyla" }]
+keywords = ["pisa", "protein", "interface", "structural-biology", "bioinformatics"]
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.7",
+]
+
+[project.optional-dependencies]
+mmcif = ["gemmi"]
+fast = ["freesasa"]
+
+[project.scripts]
+fastpisa = "fastpisa.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fastpisa*"]
+
+[tool.setuptools.package-data]
+fastpisa = ["py.typed"]
