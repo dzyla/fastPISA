@@ -109,7 +109,81 @@ Key accessors on `PISAInterfaceAnalyzer`:
 - `.get_interface(id)` — fetch one interface object
 - `.mode` — set to `"pisa"` or `"cocomaps"`; `.analyze(recompute=True)` re-runs
 
-|---
+---
+
+## Worked example — analyze a PDB and visualize an interface
+
+`tests/data/1ktz.pdb` is a small two-chain (A/B) complex — a good first run.
+
+CLI:
+
+```bash
+# PISA mode -> PDBe-schema JSON
+python -m fastpisa.cli tests/data/1ktz.pdb --pdb_id 1ktz --mode pisa -o out
+
+# COCOMAPS mode -> adds a residue-residue contact map per interface
+python -m fastpisa.cli tests/data/1ktz.pdb --pdb_id 1ktz --mode cocomaps -o out
+```
+
+```text
+=== Summary ===
+Mode: cocomaps
+Interfaces found: 1
+Assembly dissociation energy: -97.06
+Total ASA: 11576.73
+Total BSA: 541.13
+
+Top 5 hotspot residues (by buried area):
+  A94 (ARG) BSA=175.1 A^2  interfaces=[1]
+  A31 (LYS) BSA=125.2 A^2  interfaces=[1]
+  A91 (TYR) BSA=97.1 A^2   interfaces=[1]
+  B49 (SER) BSA=92.0 A^2   interfaces=[1]
+  B53 (ILE) BSA=79.0 A^2   interfaces=[1]
+```
+
+Python — introspect the interfaces and write visualizations in one go:
+
+```python
+from fastpisa.api import PISAInterfaceAnalyzer
+
+ana = PISAInterfaceAnalyzer("tests/data/1ktz.pdb", pdb_id="1ktz", mode="cocomaps")
+ana.analyze()
+
+for iface in ana.interfaces:
+    m1, m2 = iface.molecules
+    print(f"interface {iface.interface_id}: {m1['molecule_class']} {m1['auth_asym_id']} "
+          f"<-> {m2['molecule_class']} {m2['auth_asym_id']}")
+    print(f"  area={iface.interface_area:.1f} A^2  hbonds={iface.number_hydrogen_bonds} "
+          f"salt={iface.number_salt_bridges}")
+
+# --- visualization ---
+ana.write_pymol_script("1ktz_iface.pml")    # color interface residues by BSA (blue->red)
+ana.write_molstar_html("1ktz_iface.html")   # self-contained 3D Mol* viewer (open in a browser)
+ana.plot_contact_heatmap(1, out_path="1ktz_cmap.png")  # residue contact heatmap (needs matplotlib)
+
+print(ana.hot_spot_residues(top_n=5))       # top buried residues across interfaces
+```
+
+- `1ktz_iface.pml`: `pymol 1ktz_iface.pml` opens the model with the interface
+  residues coloured by buried surface area.
+- `1ktz_iface.html`: a standalone Mol* viewer (loads Molecule from CDN on first
+  open) with interface residues as ball-and-stick.
+- `1ktz_cmap.png`: a residue-residue contact-count heatmap (requires
+  `pip install fastpisa[viz]`).
+
+Confidence from existing B-factors (works for any AlphaFold/ColabFold/Protenix
+model, no JSON needed):
+
+```python
+ana = PISAInterfaceAnalyzer("tests/data/1ktz.pdb", pdb_id="1ktz", mode="pisa")
+ana.analyze()
+ana.load_plddt()                    # read pLDDT from the B-factor column
+print(ana.model_plddt())            # overall model confidence
+print(ana.plddt_scores())           # mean interface pLDDT
+ana.filter_by_plddt(min_plddt=70.0) # keep confident interfaces only
+```
+
+---
 
 ## Batch analysis (`fastpisa.batch`)
 
