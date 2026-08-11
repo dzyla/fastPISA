@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "fastPISA"
+abstract: >-
+  Local Python reproduction of the CCP4/PDBe PISA interface-analysis schema,
+  with a COCOMAPS 2.0 residue-residue contact-map mode. Parses PDB and mmCIF,
+  finds biomolecular interfaces, and emits PDBe-PISA-shaped JSON.
+keywords:
+  - PISA
+  - protein interfaces
+  - structural biology
+  - contact maps
+  - COCOMAPS
+license: MIT
+authors:
+  - family-names: "zyla"
+    given-names: ""
+    orcid: ""
+version: "0.2.0"
+date-released: "2026-08-10"
+preferred-citation:
+  type: software
+  title: "fastPISA: local PISA reproduction with a COCOMAPS 2.0 contact-map mode"
+  authors:
+    - family-names: "zyla"
+      given-names: ""
+  year: 2026
+  note: >-
+    Implements the interface-analysis schema of Krissinel & Henrick, J. Mol.
+    Biol. 372, 774-797 (2007) and the residue-contact classification of the
+    COCOMAPS 2.0 approach (Chawla et al., Bioinformatics 2025).

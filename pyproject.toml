@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fastpisa"
-version = "1.0.0"
+version = "0.2.0"
 description = "Local PISA interface analysis with an optional COCOMAPS 2.0 contact-map mode"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -19,6 +19,8 @@ dependencies = [
 [project.optional-dependencies]
 mmcif = ["gemmi"]
 fast = ["freesasa"]
+dataframe = ["pandas"]
+viz = ["matplotlib"]
 
 [project.scripts]
 fastpisa = "fastpisa.cli:main"

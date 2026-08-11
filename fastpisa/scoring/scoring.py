@@ -52,6 +52,14 @@ def calculate_p_value(
     float
         P-value in [0, 1].  P < 0.5 means the interface is more
         hydrophobic than expected; P > 0.5 means less.
+
+    .. warning::
+        This is an UNCALIBRATED approximation. The original PISA fitted its
+        P-value model to a database of >10,000 known interfaces (Krissinel &
+        Henrick 2007); the constants here are ad-hoc defaults so the absolute
+        P-values do NOT match PDBe PISA output. Use them for relative ranking
+        of interfaces within one structure, not for cross-tool comparison, and
+        treat assembly predictions based on them as preliminary.
     """
     if interface_area <= 0 or total_asa <= 0:
         return 0.5
@@ -122,6 +130,11 @@ def calculate_css(
     -------
     float
         CSS score.
+
+    .. warning::
+        Simplified hand-weighted composite, not the Krissinel statistical CSS.
+        Values differ from PDBe PISA and should be treated as a relative
+        significance heuristic, not an absolute calibrated score.
     """
     if total_asa <= 0:
         total_asa = 1.0
@@ -150,8 +163,14 @@ def calculate_css(
 def classify_interface(
     p_value: float,
     css: float,
+    interface_area: float = 0.0,
 ) -> str:
     """Classify an interface as biological or crystal packing.
+
+    Uses the PISA-style multi-criteria thresholds instead of P-value alone:
+    an interface is called ``"biological"`` only when it is large
+    (>= 800 A^2), scores highly on CSS (>= 0.5) and is more hydrophobic than
+    expected (p_value < 0.5). Small / weak interfaces are ``"crystal"``.
 
     Parameters
     ----------
@@ -159,14 +178,16 @@ def classify_interface(
         P-value of the interface.
     css : float
         CSS score.
+    interface_area : float
+        Interface area in A^2 (default 0 -> treated as non-biological unless
+        thresholds are otherwise met).
 
     Returns
     -------
     str
-        "biological" if the interface is likely biologically relevant,
-        "crystal" if likely a crystal packing artifact.
+        ``"biological"`` if the interface is likely biologically relevant,
+        ``"crystal"`` otherwise.
     """
-    # Simple classification: P < 0.5 and CSS > threshold
-    if p_value < 0.5 and css > 0.1:
+    if (p_value < 0.5 and css >= 0.5 and interface_area >= 800.0):
         return "biological"
     return "crystal"

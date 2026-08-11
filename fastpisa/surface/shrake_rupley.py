@@ -272,11 +272,27 @@ def calculate_bsa(
     atoms,
     atom_radii: Optional[Dict] = None,
 ) -> Dict[int, float]:
-    """Calculate buried surface area (BSA) per atom.
+    """Deprecated: per-atom 'buried' surface using the old 4*pi*r_vdw^2 - ASA convention.
 
-    BSA = total surface area - accessible surface area.
-    Total surface area of an atom = 4*pi*r_vdw^2.
+    .. deprecated:: 0.2.0
+        This convention treats every atom's full sphere area as 'surface' and
+        calls the difference from probe-ASA 'buried', which vastly overstates
+        BSA (assembly BSA could exceed assembly ASA). Use
+        ``fastpisa.surface.per_residue.compute_buried_surface`` instead, which
+        computes the physically meaningful buried area = isolated-molecule ASA
+        - combined ASA (the convention both analysis pipelines use).
+
+    Retained only for backward compatibility; emits a :class:`DeprecationWarning`.
     """
+    import warnings
+
+    warnings.warn(
+        "calculate_bsa uses the obsolete 4*pi*r_vdw^2 - ASA BSA convention and "
+        "overstates buried surface. Use "
+        "fastpisa.surface.per_residue.compute_buried_surface instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     bsa = {}
     for i, atom in enumerate(atoms):
         r = get_vdw_radius(atom.element)

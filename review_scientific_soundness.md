@@ -1,5 +1,17 @@
 # fastPISA — Scientific-Soundness Review
 Review date: 2026-08-10
+
+> **STATUS (2026-08-10): all 7 recommended changes below are implemented and
+> verified.** Fixes 1–5 land in commit `3eda7a0` (delegate PISA-mode disulfide/H-bond/
+> salt-bridge chemistry to the COCOMAPS classifier, remove the double-counted
+> electrostatic term, and replace the `4·π·r²−ASA` BSA convention with
+> `isolated−combined` ASA). Change 6 (`min_css` significance filter) lands in both
+> pipelines + CLI/API. Change 7 (count-invariant CI) lands as `tests/test_pipeline.py`.
+> Reproducing the original binary is also fixed: `tests/conftest.py` now writes a
+> self-contained PISA config (PISA exits 3 without one), so `test_reproduce_pisa.py`
+> runs and passes (was silently SKIPPED — 2026-08-10). Verified: 1ktz interface area
+> 483.5 Å² vs original PISA 493.4 (~2%), zero bogus disulfides, BSA now sane
+> (541/18057 Å² vs the old 345638 garbage).
 Test structure: MeV3920_F4-B05_sample_0.cif (OpenDDE AlphaFold antibody complex, 5 chains A/B/C/D/E, 12384 atoms)
 Head-to-head: original CCP4 PISA v2.2.0 binary (/programs/xtal/ccp4-9/bin/pisa)
 

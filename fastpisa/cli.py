@@ -28,12 +28,27 @@ import sys
 import time
 
 
+def _version() -> str:
+    """Return the installed fastPISA version via importlib.metadata."""
+    try:
+        from importlib.metadata import version
+        return version("fastpisa")
+    except Exception:  # pragma: no cover - not installed / editable edge cases
+        return "0.0.0+unknown"
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="fastPISA: PISA + COCOMAPS interface analysis (local)",
         prog="fastpisa",
     )
     parser.add_argument("input", help="Path to PDB or mmCIF file")
+
+    parser.add_argument(
+        "--version", action="version",
+        version=f"%(prog)s {_version()}",
+        help="Show version and exit",
+    )
 
     # Analysis mode & core parameters
     parser.add_argument(
@@ -72,6 +87,49 @@ def main():
         help="Only keep interfaces with CSS >= this significance score "
              "(default 0.0 = keep all). Use e.g. 0.5 to drop weak/"
              "crystal-packing artifacts.",
+    )
+
+    # AlphaFold confidence filtering (item 4.4)
+    parser.add_argument(
+        "--pae", metavar="JSON", default=None,
+        help="Path to AlphaFold '*_predicted_aligned_error.json'; enables "
+             "confidence filtering by PAE / ipTM.",
+    )
+    parser.add_argument(
+        "--min-pae", type=float, default=5.0,
+        help="With --pae: keep only interfaces whose mean inter-residue PAE "
+             "is <= this (A). Lower = more confident (default 5.0).",
+    )
+    parser.add_argument(
+        "--min-iptm", type=float, default=None,
+        help="With --pae: drop all interfaces when the model ipTM is below "
+             "this (e.g. 0.8). Default: no ipTM cut.",
+    )
+    parser.add_argument(
+        "--min-plddt", type=float, default=None,
+        help="Keep only interfaces whose mean per-residue pLDDT (read from the "
+             "B-factor column) is >= this. Portable across predictors -- no "
+             "JSON needed. E.g. 70.0.",
+    )
+
+    # Visualisation (item 4.3)
+    parser.add_argument(
+        "--pymol-script", metavar="PATH", default=None,
+        help="Write a PyMOL .pml colouring the top interface's residues by "
+             "buried surface area.",
+    )
+    parser.add_argument(
+        "--heatmap", metavar="PATH", default=None,
+        help="Save a matplotlib residue-residue contact heatmap (needs "
+             "matplotlib; fastpisa[viz]).",
+    )
+    parser.add_argument(
+        "--molstar", metavar="PATH", default=None,
+        help="Write a self-contained Mol* HTML viewer for the top interface.",
+    )
+    parser.add_argument(
+        "--hotspots", type=int, metavar="N", default=0,
+        help="Print the top N hotspot interface residues (by buried area).",
     )
 
     # Output controls
@@ -131,11 +189,37 @@ def main():
     analyzer.analyze()
     t_wall = time.monotonic() - t0
 
+    # Optional AlphaFold confidence filtering (mutates analyzer.interfaces).
+    if args.pae:
+        analyzer.load_pae(args.pae)
+        kept = analyzer.filter_by_pae(max_pae=args.min_pae)
+        if args.min_iptm is not None:
+            analyzer.filter_by_iptm(min_iptm=args.min_iptm)
+        if analyzer.interfaces:
+            print(f"PAE filter: kept {len(analyzer.interfaces)}/{len(kept) or 1} interface(s) "
+                  f"with mean PAE <= {args.min_pae:.1f} A")
+
+    # Portable B-factor / pLDDT confidence filter (no JSON required).
+    if args.min_plddt is not None:
+        analyzer.load_plddt()
+        analyzer.filter_by_plddt(min_plddt=args.min_plddt)
+        print(f"pLDDT filter: kept {analyzer.n_interfaces()} interface(s) with "
+              f"mean pLDDT >= {args.min_plddt:.1f}")
+
     os.makedirs(args.output_dir, exist_ok=True)
     written = analyzer.write_json(args.output_dir)
 
     for label, path in written.items():
         print(f"Written: {path}")
+
+    # Visualisation outputs (item 4.3)
+    if analyzer.interfaces:
+        if args.pymol_script:
+            print(f"Written: {analyzer.write_pymol_script(args.pymol_script)}")
+        if args.molstar:
+            print(f"Written: {analyzer.write_molstar_html(args.molstar)}")
+        if args.heatmap:
+            print(f"Written: {analyzer.plot_contact_heatmap(1, out_path=args.heatmap)}")
 
     n_iface = analyzer.n_interfaces()
     asm = analyzer.assembly_json["assembly"]
@@ -150,6 +234,8 @@ def main():
             "dissociation_energy": asm["dissociation_energy"],
             "interface_count": n_iface,
         }
+        if args.pae and analyzer.pae_data is not None:
+            out["pae_filtered_interfaces"] = n_iface
         if args.show_time:
             out["wall_seconds"] = round(t_wall, 3)
         print(json.dumps(out, indent=2))
@@ -161,6 +247,12 @@ def main():
     print(f"Assembly dissociation energy: {asm['dissociation_energy']}")
     print(f"Total ASA: {asm['accessible_surface_area']}")
     print(f"Total BSA: {asm['buried_surface_area']}")
+
+    if args.hotspots and analyzer.interfaces:
+        print(f"\nTop {args.hotspots} hotspot residues (by buried area):")
+        for hs in analyzer.hot_spot_residues(top_n=args.hotspots):
+            print(f"  {hs['chain']}{hs['seq']} "
+                  f"({hs['residue']}) BSA={hs['bsa']:.1f} A^2  interfaces={hs['interfaces']}")
 
     if args.mode == "cocomaps":
         for iface in analyzer.interfaces:

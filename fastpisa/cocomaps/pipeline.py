@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+import logging
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -34,6 +35,8 @@ from fastpisa.surface.per_residue import (
 from fastpisa.cocomaps.contact_map import (
     build_residue_contact_map, aggregate_residue_pairs,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def analyze_structure_cocomaps(
@@ -74,24 +77,22 @@ def analyze_structure_cocomaps(
         raise ValueError(f"No atoms found in {input_file}")
 
     n_atoms = len(atoms)
-    print(f"Parsed {n_atoms} atoms from {input_file}")
+    logger.info("Parsed %d atoms from %s", n_atoms, input_file)
 
     # 2. Molecules and masks (exclude ordered water from interface search)
     molecules = get_molecules(structure)
     molecules = filter_water_molecules(molecules, exclude_water=exclude_water)
     masks = get_molecule_masks(atoms, molecules)
     n_molecules = len(molecules)
-    print(f"Found {n_molecules} molecules")
+    logger.info("Found %d molecules", n_molecules)
 
     # 3. KD-tree + combined ASA (shared with PISA mode)
-    global atoms_global
-    atoms_global = atoms
     all_coords = np.array([[a.x, a.y, a.z] for a in atoms])
     all_radii = np.array([get_vdw_radius(a.element) for a in atoms])
     neighbor_cutoff = 2.0 * all_radii.max() + probe_radius + 1.0
     kd_tree = cKDTree(all_coords)
 
-    print("Calculating combined-structure ASA...")
+    logger.info("Calculating combined-structure ASA...")
     asa_combined = calculate_asa(
         atoms=atoms,
         probe_radius=probe_radius,
@@ -129,7 +130,7 @@ def analyze_structure_cocomaps(
     bsa_combined, assembly_asa, assembly_bsa = compute_buried_surface(
         asa_alone, asa_combined, n_atoms, masks
     )
-    print(f"Combined ASA: {assembly_asa:.1f} A^2, BSA: {assembly_bsa:.1f} A^2")
+    logger.info("Combined ASA: %.1f A^2, BSA: %.1f A^2", assembly_asa, assembly_bsa)
 
     total_asa_alone = {
         mol_idx: sum(asa_alone.get((mol_idx, i), 0.0)

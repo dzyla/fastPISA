@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+from fastpisa.interface.contacts import HBOND_DISTANCE
+
 # ---------------------------------------------------------------------------
 # Amino-acid / nucleotide atom classification tables
 # ---------------------------------------------------------------------------
@@ -178,16 +180,18 @@ def classify_atom_pair(
     if dist < 3.0 and (is_metal(el1_u) or is_metal(el2_u)):
         return "metal_mediated"
 
-    # 5. Hydrogen bond / weak H-bond (before clash: H-bonds are short-range)
-    if dist < 3.6:
-        if _hbond(res1_u, a1, res2_u, a2, el1_u, el2_u):
-            return "hydrogen_bond"
+    # 5. Hydrogen bond / weak H-bond (before clash: H-bonds are short-range).
+    #    The strong H-bond uses the SAME HBOND_DISTANCE (3.5 A) as the PISA-mode
+    #    classifier so both modes report identical H-bond counts (single source
+    #    of truth for atom chemistry). Weak C-H...O/N keeps its own 3.8 A band.
+    if dist < HBOND_DISTANCE and _hbond(res1_u, a1, res2_u, a2, el1_u, el2_u):
+        return "hydrogen_bond"
+    if dist < 3.8:
         # weak C-H ... O/N
-        if dist < 3.8:
-            if (el1_u == "C" and el2_u in ("O", "N")) or (
-                el2_u == "C" and el1_u in ("O", "N")
-            ):
-                return "weak_hbond"
+        if (el1_u == "C" and el2_u in ("O", "N")) or (
+            el2_u == "C" and el1_u in ("O", "N")
+        ):
+            return "weak_hbond"
 
     # 6. Clash: below sum of vdW radii (only when no specific interaction matched)
     if dist < (vdw_radius1 + vdw_radius2) - 0.05:

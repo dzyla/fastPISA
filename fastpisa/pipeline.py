@@ -15,12 +15,13 @@ The output matches the PDBe PISA JSON schema.
 """
 
 import json
+import logging
 import os
 import numpy as np
 from typing import List, Dict, Tuple, Optional
 from fastpisa.parser.pdb_parser import parse_pdb, parse_mmcif, PDBStructure
 from fastpisa.surface.shrake_rupley import (
-    calculate_asa, calculate_asa_batched, calculate_bsa, get_vdw_radius,
+    calculate_asa, calculate_asa_batched, get_vdw_radius,
 )
 from fastpisa.interface.contacts import (
     find_interface_atoms, find_contacts, get_molecules, get_molecule_masks,
@@ -38,6 +39,8 @@ from fastpisa.output.json_output import build_interfaces_json, build_assembly_js
 from fastpisa.surface.per_residue import (
     compute_per_residue_surface, compute_buried_surface,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def analyze_structure(
@@ -82,29 +85,26 @@ def analyze_structure(
     dict
         interfaces.json and assembly.json data.
     """
-    global atoms_global
-
     # 1. Parse input file
     if input_file.endswith(".cif") or input_file.endswith(".cif.gz"):
         structure = parse_mmcif(input_file)
     else:
         structure = parse_pdb(input_file)
 
-    atoms_global = structure.atoms
     atoms = structure.atoms
 
     if not atoms:
         raise ValueError(f"No atoms found in {input_file}")
 
     n_atoms = len(atoms)
-    print(f"Parsed {n_atoms} atoms from {input_file}")
+    logger.info("Parsed %d atoms from %s", n_atoms, input_file)
 
     # 2. Get molecules and masks (exclude ordered water from interface search)
     molecules = get_molecules(structure)
     molecules = filter_water_molecules(molecules, exclude_water=exclude_water)
     masks = get_molecule_masks(atoms, molecules)
     n_molecules = len(molecules)
-    print(f"Found {n_molecules} molecules")
+    logger.info("Found %d molecules", n_molecules)
 
     # 3. Build KD-tree for neighbor lookup using all atoms
     from scipy.spatial import cKDTree
@@ -114,7 +114,7 @@ def analyze_structure(
     kd_tree = cKDTree(all_coords)
 
     # 4. Calculate ASA for the COMBINED structure ONCE (cached)
-    print("Calculating combined-structure ASA...")
+    logger.info("Calculating combined-structure ASA...")
     asa_combined = calculate_asa(
         atoms=atoms,
         probe_radius=probe_radius,
@@ -152,7 +152,7 @@ def analyze_structure(
     bsa_combined, assembly_asa, assembly_bsa = compute_buried_surface(
         asa_alone, asa_combined, n_atoms, masks
     )
-    print(f"Combined ASA: {assembly_asa:.1f} A^2, BSA: {assembly_bsa:.1f} A^2")
+    logger.info("Combined ASA: %.1f A^2, BSA: %.1f A^2", assembly_asa, assembly_bsa)
 
     total_asa_alone = {}
     for mol_idx in range(n_molecules):

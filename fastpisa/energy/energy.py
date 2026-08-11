@@ -148,6 +148,14 @@ def calculate_entropy(
     -------
     float
         Entropy contribution in kcal/mol.
+
+    .. warning::
+        Rough approximation. PISA uses a statistical-mechanical model
+        (translational/rotational entropy of the dissociating molecules via
+        Boltzmann statistics, Krissinel & Henrick 2007 Eq. 7-11); the linear
+        formula here is a hand-tuned surrogate and will diverge from the CCP4
+        binary, which matters most for ``dissociation_energy``. Use for
+        relative ranking only.
     """
     # Simplified: entropy ~ 0.02 * interface_area + 0.5 * n_residues_total
     # This is a rough approximation calibrated to PISA values

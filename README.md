@@ -109,14 +109,92 @@ Key accessors on `PISAInterfaceAnalyzer`:
 - `.get_interface(id)` — fetch one interface object
 - `.mode` — set to `"pisa"` or `"cocomaps"`; `.analyze(recompute=True)` re-runs
 
+|---
+
+## Batch analysis (`fastpisa.batch`)
+
+Analyse many structures (e.g. AlphaFold antibody–antigen complexes) in one call,
+optionally in parallel — no extra dependency (`concurrent.futures`).
+
+```python
+from fastpisa.batch import analyze_many, expand_inputs
+
+files = expand_inputs("models/*.cif", "/path/to/a_database")
+for r in analyze_many(files, mode="pisa", n_jobs=4):
+    print(r["path"], r["ok"], r["n_interfaces"], r["error"])
+```
+
+`expand_inputs` expands globs / scans directories for `.pdb`/`.cif`/`.cif.gz`.
+`analyze_many` returns one dict per input `{path, ok, result, n_interfaces, error}`
+in the same order; a single bad file never aborts the batch. Use `n_jobs=1`
+(serial) for < ~10 files and `n_jobs>1` (process pool) for larger batches.
+
+A complete worked example lives at `examples/batch_analyze.py`:
+
+```bash
+python examples/batch_analyze.py "results/**/*.cif" -o out.jsonl --n_jobs 4
+```
+
 ---
 
-## Processing many antibody complexes (batch example)
+## AlphaFold confidence filtering (PAE / ipTM)
 
-The `fastpisa.api` class is designed to drive batch pipelines. A worked example that
-analyzed 107 AlphaFold antibody–antigen complexes (classifying antibody vs antigen
-chains from the companion iptm matrix) lives in `/tmp/ab_batch/run_batch.py`.
-Its output CSVs/JSON are a ready template for your own batch runs.
+AlphaFold models ship a `*_predicted_aligned_error.json` (a residue×residue PAE
+matrix plus the global `iptm`/`ptm`). fastPISA can rank and filter interfaces by
+how confidently they are predicted — the standard check for whether an AlphaFold
+interface is real.
+
+```python
+from fastpisa.api import PISAInterfaceAnalyzer
+
+ana = PISAInterfaceAnalyzer("complex.cif", mode="pisa")
+ana.analyze()
+ana.load_pae("complex_predicted_aligned_error.json")
+
+print(ana.pae_scores())          # mean PAE (A) per interface, lower = more confident
+ana.filter_by_pae(max_pae=5.0)   # keep only interfaces with mean PAE <= 5 A
+ana.filter_by_iptm(min_iptm=0.8) # drop all interfaces if model ipTM < 0.8
+```
+
+CLI: `python -m fastpisa.cli complex.cif --pae complex_..._error.json --min-pae 5.0 --min-iptm 0.8`.
+
+### Portable confidence from B-factors (pLDDT)
+
+The PAE JSON above is only emitted by Protenix / OpenDDE; most predictors do not
+produce it. The broadly-applicable confidence signal is the **per-residue pLDDT in the
+B-factor column**, which AlphaFold, ColabFold and Protenix all write into the model
+(0-100, higher = more confident). No extra file is needed.
+
+```python
+ana.load_plddt()                    # read pLDDT from B-factors
+print(ana.model_plddt())            # overall model confidence
+print(ana.plddt_scores())           # mean interface pLDDT, higher = more confident
+ana.filter_by_plddt(min_plddt=70.0) # keep interfaces whose mean pLDDT >= 70
+```
+
+CLI: `python -m fastpisa.cli complex.cif --min-plddt 70.0`. Raises a clear `ValueError`
+if the model's B-factors are constant (no confidence signal).
+
+---
+
+## Visualisation (`fastpisa.viz`)
+
+Three ways to look at an interface (item 4.3):
+
+```python
+from fastpisa.api import PISAInterfaceAnalyzer
+ana = PISAInterfaceAnalyzer("6nxr.pdb", mode="cocomaps")
+ana.analyze()
+iface = ana.interfaces[0]
+
+ana.write_pymol_script("iface.pml")             # colour interface residues by BSA
+ana.write_molstar_html("iface.html")            # self-contained Mol* 3D viewer
+ana.plot_contact_heatmap(1, out_path="cmap.png")# matplotlib residue-contact heatmap
+```
+
+CLI equivalents: `--pymol-script out.pml`, `--molstar out.html`, `--heatmap cmap.png`,
+and `--hotspots N` prints the top-N buried residues. The matplotlib heatmap needs
+`pip install fastpisa[viz]`; PyMOL-script and Mol* HTML need no extra deps.
 
 ---
 
@@ -146,6 +224,9 @@ fastpisa/
 ├── api.py                 # PISAInterfaceAnalyzer class + analyze_interface()
 ├── cli.py                 # command-line interface
 ├── pipeline.py            # PISA analysis pipeline
+├── pae.py                 # AlphaFold PAE / ipTM reading + interface filtering
+├── viz.py                 # PyMOL script / matplotlib heatmap / Mol* HTML
+├── batch.py               # parallel batch analysis (analyze_many)
 ├── cocomaps/              # COCOMAPS 2.0 mode
 │   ├── interactions.py    # atomic interaction-type classifier
 │   ├── contact_map.py     # residue-residue contact map + matrix

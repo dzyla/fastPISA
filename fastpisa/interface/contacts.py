@@ -18,6 +18,33 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
+# ---------------------------------------------------------------------------
+# Standard polymer residue names used for molecule classification and masks.
+# Classification is by residue COMPOSITION, not the parser's sticky
+# chain.group flag (a protein chain with a bound ligand is mislabeled ligand).
+# These are module-level single sources of truth -- edit here, not in each
+# function that bins residues (see get_molecules / get_molecule_masks).
+# ---------------------------------------------------------------------------
+AMINO_ACIDS = frozenset({
+    "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY",
+    "HIS", "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER",
+    "THR", "TRP", "TYR", "VAL", "MSE", "SEC", "PYL",
+})
+
+# Canonical DNA/RNA plus their common modified forms (PDB CCD codes). Canonical
+# mmCIF uses A/G/C/T/U and DA/DG/DC/DT; RA/RG/RC/RT/RU and the modifications are
+# non-standard residues that must still be treated as polymer nucleic acids so
+# e.g. a methylated rRNA is recognised as one RNA molecule, not split into
+# per-residue ligands.
+NUCLEIC_ACIDS = frozenset({
+    "A", "G", "C", "T", "U",
+    "DA", "DG", "DC", "DT", "DU",
+    "RA", "RG", "RC", "RT", "RU",
+    # common RNA/DNA modifications
+    "5MC", "PSU", "7MG", "2MG", "1MA", "H2U", "OMC", "5MU", "M2G", "5HC", "YG",
+})
+
+
 @dataclass
 class AtomContact:
     """A contact between two atoms across an interface."""
@@ -112,7 +139,9 @@ HBOND_DISTANCE = 3.5
 SALT_BRIDGE_DISTANCE = 4.0
 DISULFIDE_DISTANCE = 3.0
 OTHER_CONTACT_DISTANCE = 5.0
-COVALENT_DISTANCE = 2.2
+# NOTE: there is no generic COVALENT_DISTANCE — inter-molecular covalent bonds
+# are treated as disulfides only (the old ``d < 2.2`` rule mislabelled crystal
+# self-copies and made PISA/COCOMAPS counts diverge).
 
 
 def is_hydrogen_bond(
@@ -279,12 +308,16 @@ def find_contacts(
             a1 = atoms[idx1]
             a2 = atoms[idx2]
 
-            # Classify contact (disulfide must be checked before generic
-            # covalent so real Cys S-S bonds are not swallowed by 'covalent')
+            # Classify contact using the SHARED chemistry (identical disulfide /
+            # salt-bridge / H-bond rules as COCOMAPS mode, single source of
+            # truth). There is deliberately NO blanket "covalent" class here:
+            # genuine inter-molecular covalent bonds are essentially only
+            # Cys-Cys disulfides, and a generic ``d < 2.2 A`` rule mislabels
+            # crystallographic self-copies (identical atoms ~1.5 A apart) as
+            # covalent, which also suppressed their H-bond/salt classification
+            # so that PISA counts diverged from COCOMAPS.
             if is_disulfide(a1.res_name, a2.res_name, a1.element, a2.element, d):
                 btype = "disulfide"
-            elif d < COVALENT_DISTANCE:
-                btype = "covalent"
             elif is_salt_bridge(a1.res_name, a1.atom_name, a2.res_name, a2.atom_name, d):
                 btype = "salt_bridge"
             elif is_hydrogen_bond(
@@ -348,11 +381,6 @@ def get_molecules(structure):
     """
     molecules = []
     mol_id = 0
-    protein_aas = {"ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY",
-                   "HIS", "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER",
-                   "THR", "TRP", "TYR", "VAL", "MSE", "SEC", "PYL"}
-    nuc_acids = {"A", "G", "C", "T", "U", "DA", "DG", "DC", "DT", "DU",
-                 "RA", "RG", "RC", "RT", "RU"}
 
     for chain in structure.chains:
         if not chain.atoms:
@@ -363,7 +391,7 @@ def get_molecules(structure):
         for atom in chain.atoms:
             rn = atom.res_name.upper()
             # Standard polymer residues are ATOM records of amino/nucleic acids
-            is_poly_res = (rn in protein_aas) or (rn in nuc_acids)
+            is_poly_res = (rn in AMINO_ACIDS) or (rn in NUCLEIC_ACIDS)
             if is_poly_res:
                 poly_atoms.append(atom)
             else:
@@ -372,9 +400,9 @@ def get_molecules(structure):
         # Polymer molecule
         if poly_atoms:
             res_names = set(a.res_name.upper() for a in poly_atoms)
-            if res_names & protein_aas:
+            if res_names & AMINO_ACIDS:
                 mol_class = "Protein"
-            elif res_names & nuc_acids:
+            elif res_names & NUCLEIC_ACIDS:
                 mol_class = "NucleicAcid"
             else:
                 mol_class = "Other"
@@ -421,11 +449,6 @@ def get_molecule_masks(atoms, molecules):
     """
     n = len(atoms)
     masks = []
-    protein_aas = {"ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY",
-                   "HIS", "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER",
-                   "THR", "TRP", "TYR", "VAL", "MSE", "SEC", "PYL"}
-    nuc_acids = {"A", "G", "C", "T", "U", "DA", "DG", "DC", "DT", "DU",
-                 "RA", "RG", "RC", "RT", "RU"}
 
     for mol in molecules:
         mask = np.zeros(n, dtype=bool)
@@ -447,12 +470,8 @@ def get_molecule_masks(atoms, molecules):
                 if atom.auth_asym_id != auth_chain:
                     continue
                 rn = atom.res_name.upper()
-                if rn in protein_aas or rn in nuc_acids:
+                if rn in AMINO_ACIDS or rn in NUCLEIC_ACIDS:
                     mask[i] = True
 
         masks.append(mask)
     return masks
-
-
-# Global reference to the current atoms list (set by the pipeline before analysis)
-atoms_global = []

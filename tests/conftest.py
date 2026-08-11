@@ -34,22 +34,67 @@ needs_pisa_bin = pytest.mark.skipif(
 )
 
 
+# Minimal CCP4 PISA config template. PISA (v2.2.0) hard-errors with
+# "No configuration file" (exit 3) if none is provided, so every invocation
+# MUST set PISA_CONF_FILE. We point DATA_ROOT at the test's own tmp dir with a
+# unique SESSION_PREFIX so each test's sessions are isolated and `-list`
+# resolves them from the same working dir. The SRS/MOLREF/PISTORE dirs must
+# point at the CCP4 share tree (they hold the chemical / surface data).
+_PISA_CFG_BODY = """\
+DATA_ROOT
+{cwd}
+SRS_DIR
+/programs/xtal/ccp4-9/share/ccp4srs/
+MOLREF_DIR
+/programs/xtal/ccp4-9/share/pisa/
+PISTORE_DIR
+/programs/xtal/ccp4-9/share/pisa/
+RASMOL_COM
+/dummy/rasmol
+JMOL_COM
+/dummy/jmol
+CCP4MG_COM
+/dummy/ccp4mg
+SESSION_PREFIX
+__fp_
+"""
+
+
+def _write_pisa_config(cwd):
+    """Write a self-contained PISA config into ``cwd`` and return its path."""
+    cfg_path = os.path.join(cwd, "pisa_fp_test.cfg")
+    with open(cfg_path, "w") as fh:
+        fh.write(_PISA_CFG_BODY.format(cwd=cwd))
+    return cfg_path
+
+
+def _pisa_env(cwd):
+    """Return an env with PISA_CONF_FILE pointing at a fresh config in ``cwd``.
+
+    The session prefix ``__fp_`` keeps sessions from colliding with anything
+    else in the same DATA_ROOT and guarantees ``pisa <sess> -list`` resolves
+    the session written by a prior ``-analyse`` from the same (tmp) dir.
+    """
+    env = dict(os.environ)
+    env.pop("PISA_CONFIG", None)
+    env["PISA_CONF_FILE"] = _write_pisa_config(cwd)
+    env["PATH"] = "/programs/xtal/ccp4-9/bin:" + env.get("PATH", "")
+    return env
+
+
 def run_pisa_binary_analyse(cif_pdb, session_name, cwd):
     """Run the original CCP4 PISA binary -analyse.
 
-    IMPORTANT: we do NOT set PISA_CONF_FILE / PISA_CONFIG here, because the
-    reference config's DATA_ROOT redirects sessions away from the working dir.
-    Without a config env the binary stores the session under ``cwd`` (verified
-    experimentally), which is what lets the subsequent ``-list`` resolve it.
+    A config file is required (the binary otherwise exits 3 with "No
+    configuration file"). We write a per-run config whose DATA_ROOT is ``cwd``
+    with a unique SESSION_PREFIX, so the session lands in ``cwd`` and the
+    subsequent ``-list`` resolves it from the same place.
 
     For structures without crystal data (CASP17 AlphaFold models) this yields
     exactly the ASU interfaces -- the cleanest apples-to-apples comparison
     with fastPISA.
     """
-    env = dict(os.environ)
-    env.pop("PISA_CONFIG", None)
-    env.pop("PISA_CONF_FILE", None)
-    env["PATH"] = "/programs/xtal/ccp4-9/bin:" + env.get("PATH", "")
+    env = _pisa_env(cwd)
     cmd = [PISA_BIN, session_name, "-analyse", cif_pdb]
     r = subprocess.run(
         cmd, capture_output=True, text=True, cwd=cwd, env=env, timeout=300
@@ -59,10 +104,7 @@ def run_pisa_binary_analyse(cif_pdb, session_name, cwd):
 
 def pisa_list_interfaces(session_name, cwd):
     """Run `pisa <session> -list interfaces` and return its text."""
-    env = dict(os.environ)
-    env.pop("PISA_CONFIG", None)
-    env.pop("PISA_CONF_FILE", None)
-    env["PATH"] = "/programs/xtal/ccp4-9/bin:" + env.get("PATH", "")
+    env = _pisa_env(cwd)
     cmd = [PISA_BIN, session_name, "-list", "interfaces"]
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, env=env, timeout=120)
     return r.stdout

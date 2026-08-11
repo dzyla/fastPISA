@@ -100,6 +100,12 @@ class PISAInterfaceAnalyzer:
         self._interfaces_json: dict = {}
         self._assembly_json: dict = {}
 
+        # AlphaFold confidence (set via load_pae)
+        self.pae_data = None          # fastpisa.pae.PAEData
+        self._pae_map: dict = {}
+        # Portable per-residue confidence (set via load_plddt; from B-factor).
+        self._plddt_map: dict = {}
+
     # -- public API --------------------------------------------------------
     def analyze(self, recompute: bool = True) -> dict:
         """Run the analysis and populate :attr:`interfaces` and :attr:`result`.
@@ -170,8 +176,12 @@ class PISAInterfaceAnalyzer:
 
         Returns a dict mapping ``"interfaces"`` / ``"assembly"`` to the file
         paths written.
+
+        ``recompute=False`` is used internally so this never re-runs the
+        analysis (which would clobber any PAE/pLDDT/CSS filtering applied to
+        :attr:`interfaces`) and does not do duplicate work.
         """
-        self.analyze()
+        self.analyze(recompute=False)
         out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         base = f"{self.pdb_id}-assembly{self.assembly_id}"
@@ -185,6 +195,109 @@ class PISAInterfaceAnalyzer:
         with open(assembly_path, "w") as f:
             json.dump(self._assembly_json, f, indent=2)
         return {"interfaces": str(interfaces_path), "assembly": str(assembly_path)}
+
+    # -- tabular / hot-spot access -----------------------------------------
+    def to_dataframe(self):
+        """Return a pandas DataFrame, one row per interface.
+
+        Columns: interface_id, molecule ids, area, energies, p-value, CSS,
+        residue/contact counts. Requires ``pandas`` (``pip install pandas`` or
+        the ``fastpisa[dataframe]`` extra). If it is unavailable a clear
+        :class:`ImportError` is raised.
+        """
+        import pandas as pd
+        self.analyze()
+        rows = []
+        for i in self.interfaces:
+            rows.append({
+                "interface_id": i.interface_id,
+                "molecule1_id": i.molecule1_id,
+                "molecule2_id": i.molecule2_id,
+                "interface_area": i.interface_area,
+                "solvation_energy": i.solvation_energy,
+                "stabilization_energy": i.stabilization_energy,
+                "p_value": i.p_value,
+                "css": i.css,
+                "n_interface_residues": i.number_interface_residues,
+                "n_hydrogen_bonds": i.number_hydrogen_bonds,
+                "n_salt_bridges": i.number_salt_bridges,
+                "n_disulfide_bonds": i.number_disulfide_bonds,
+                "n_other_bonds": i.number_other_bonds,
+                "n_atom_contacts": len(i.contacts),
+            })
+        return pd.DataFrame(rows)
+
+    def to_residue_dataframe(self):
+        """Return a pandas DataFrame, one row per interface residue.
+
+        Columns: interface_id, molecule, chain, residue, seq, asa, bsa,
+        solvation_energy. Requires ``pandas`` (see :meth:`to_dataframe`).
+        """
+        import pandas as pd
+        self.analyze()
+        rows = []
+        for i in self.interfaces:
+            for imol, mol in enumerate(i.molecules, start=1):
+                comp = mol.get("residue_label_comp_ids") or []
+                seq = mol.get("residue_seq_ids") or []
+                sa = mol.get("accessible_surface_areas") or []
+                ba = mol.get("buried_surface_areas") or []
+                se = mol.get("solvation_energies") or []
+                chain = mol.get("auth_asym_id", "")
+                for k in range(len(comp)):
+                    rows.append({
+                        "interface_id": i.interface_id,
+                        "molecule": imol,
+                        "chain": chain,
+                        "residue": comp[k],
+                        "seq": seq[k] if k < len(seq) else None,
+                        "asa": sa[k] if k < len(sa) else None,
+                        "bsa": ba[k] if k < len(ba) else None,
+                        "solvation_energy": se[k] if k < len(se) else None,
+                    })
+        return pd.DataFrame(rows)
+
+    def hot_spot_residues(self, top_n: int = 10, by: str = "bsa") -> List[dict]:
+        """Return the top-N interface residues ranked by buried surface area.
+
+        ``bsa`` residues buried most across all interfaces; ``solv`` ranks the
+        most negative (most stabilising) per-residue solvation energy. Each
+        entry is ``{chain, seq, residue, bsa, solvation_energy, interfaces}``.
+        Values are summed over every interface the residue participates in.
+        """
+        self.analyze()
+        by = by.lower()
+        if by not in ("bsa", "solv"):
+            raise ValueError(f"by must be 'bsa' or 'solv', got {by!r}")
+        res: Dict[tuple, dict] = {}
+        for iface in self.interfaces:
+            for _, mol in enumerate(iface.molecules, start=1):
+                comp = mol.get("residue_label_comp_ids") or []
+                seq = mol.get("residue_seq_ids") or []
+                ba = mol.get("buried_surface_areas") or []
+                se = mol.get("solvation_energies") or []
+                chain = mol.get("auth_asym_id", "")
+                for k in range(len(comp)):
+                    key = (chain, str(seq[k]) if k < len(seq) else "?", comp[k])
+                    e = res.setdefault(key, {"bsa": 0.0, "solv": 0.0, "faces": set()})
+                    if k < len(ba) and ba[k] is not None:
+                        e["bsa"] += ba[k]
+                    if k < len(se) and se[k] is not None:
+                        e["solv"] += se[k]
+                    e["faces"].add(iface.interface_id)
+        if by == "solv":
+            ranked = sorted(res.items(), key=lambda kv: kv[1]["solv"])
+        else:
+            ranked = sorted(res.items(), key=lambda kv: kv[1]["bsa"], reverse=True)
+        return [
+            {
+                "chain": key[0], "seq": key[1], "residue": key[2],
+                "bsa": round(v["bsa"], 2),
+                "solvation_energy": round(v["solv"], 4),
+                "interfaces": sorted(v["faces"]),
+            }
+            for key, v in ranked[:top_n]
+        ]
 
     def summary(self) -> str:
         """Return a human-readable summary string of the analysis."""
@@ -207,15 +320,160 @@ class PISAInterfaceAnalyzer:
             )
         return "\n".join(lines)
 
-    def _parsed_atoms(self) -> list:
-        """Expose the parsed atoms via a lightweight re-parse (cached)."""
+    def _parsed_structure(self):
+        """Return the parsed structure, parsed and cached once."""
         if not hasattr(self, "_structure_cache"):
             from fastpisa.parser.pdb_parser import parse_pdb, parse_mmcif
             if str(self.path).endswith((".cif", ".cif.gz")):
                 self._structure_cache = parse_mmcif(self.path)
             else:
                 self._structure_cache = parse_pdb(self.path)
-        return self._structure_cache.atoms
+        return self._structure_cache
+
+    def _parsed_atoms(self) -> list:
+        """Expose the parsed atoms (single shared parse, cached)."""
+        return self._parsed_structure().atoms
+
+    # -- AlphaFold confidence (PAE / ipTM) --------------------------------
+    def load_pae(self, json_path) -> "PISAInterfaceAnalyzer":
+        """Load an AlphaFold ``*_predicted_aligned_error.json`` for confidence
+        filtering. Returns ``self`` for chaining."""
+        from fastpisa.pae import load_pae, build_pae_index_map
+        self.pae_data = load_pae(json_path)
+        self._pae_map = build_pae_index_map(self._parsed_structure())
+        return self
+
+    def pae_scores(self) -> Dict[int, Optional[float]]:
+        """Mean PAE (A) per interface over its contacting residue pairs.
+
+        Lower = more confidently predicted. Requires :meth:`load_pae` first.
+        """
+        from fastpisa.pae import interface_pae_score
+        if self.pae_data is None or not self.pae_data.has_pae:
+            raise ValueError("load_pae(...) must be called before pae_scores")
+        self.analyze()
+        atoms = self._parsed_atoms()
+        return {
+            i.interface_id: interface_pae_score(i, atoms, self._pae_map, self.pae_data)
+            for i in self.interfaces
+        }
+
+    def filter_by_pae(self, max_pae: float = 5.0) -> List[Interface]:
+        """Keep only interfaces whose mean PAE is <= ``max_pae``.
+
+        Requires :meth:`load_pae`. Mutates and returns :attr:`interfaces`.
+        """
+        from fastpisa.pae import interface_pae_score
+        if self.pae_data is None or not self.pae_data.has_pae:
+            raise ValueError("load_pae(...) must be called before filter_by_pae")
+        self.analyze()
+        atoms = self._parsed_atoms()
+        kept = []
+        for i in self.interfaces:
+            score = interface_pae_score(i, atoms, self._pae_map, self.pae_data)
+            if score is None or score <= max_pae:
+                kept.append(i)
+        self.interfaces = kept
+        return kept
+
+    def filter_by_iptm(self, min_iptm: float = 0.8) -> List[Interface]:
+        """Drop all interfaces if the model's ipTM is below ``min_iptm``.
+
+        Per DeepMind convention, ipTM < 0.8 indicates an unreliable model.
+        Requires :meth:`load_pae`. Mutates and returns :attr:`interfaces`.
+        """
+        from fastpisa.pae import interface_pae_score  # noqa: F401 (import consistency)
+        if self.pae_data is None:
+            raise ValueError("load_pae(...) must be called before filter_by_iptm")
+        self.analyze()
+        if self.pae_data.iptm is not None and self.pae_data.iptm < min_iptm:
+            self.interfaces = []
+        return self.interfaces
+
+    # -- portable confidence from the B-factor / pLDDT column -------------
+    def load_plddt(self) -> "PISAInterfaceAnalyzer":
+        """Read per-residue confidence from the B-factor column (pLDDT).
+
+        AlphaFold / ColabFold / Protenix store pLDDT (0-100) in B-factors, so
+        this works for any predictor with no extra JSON -- unlike ``load_pae``,
+        whose ``*_predicted_aligned_error.json`` is Protenix/OpenDDE-specific.
+        Raises ValueError if the model carries no meaningful B-factors.
+        """
+        from fastpisa.pae import build_plddt_map
+        self._plddt_map = build_plddt_map(self._parsed_structure())
+        if not self._plddt_map:
+            raise ValueError("no residues with a B-factor to read")
+        vals = list(self._plddt_map.values())
+        if max(vals) == min(vals):
+            raise ValueError(
+                "B-factors are constant (e.g. all zero) -- this model carries no "
+                "pLDDT-like confidence to filter on"
+            )
+        return self
+
+    @property
+    def has_plddt(self) -> bool:
+        return bool(self._plddt_map)
+
+    def model_plddt(self) -> Optional[float]:
+        """Overall mean pLDDT (a global confidence proxy), or None."""
+        from fastpisa.pae import model_plddt
+        return model_plddt(self._plddt_map)
+
+    def plddt_scores(self) -> Dict[int, Optional[float]]:
+        """Mean interface pLDDT per interface. Requires :meth:`load_plddt`."""
+        from fastpisa.pae import interface_plddt
+        if not self._plddt_map:
+            raise ValueError("load_plddt(...) must be called before plddt_scores")
+        self.analyze()
+        atoms = self._parsed_atoms()
+        return {
+            i.interface_id: interface_plddt(i, atoms, self._plddt_map)
+            for i in self.interfaces
+        }
+
+    def filter_by_plddt(self, min_plddt: float = 70.0) -> List[Interface]:
+        """Keep only interfaces whose mean per-residue pLDDT >= ``min_plddt``.
+
+        Uses the B-factor column (portable across predictors). Requires
+        :meth:`load_plddt`. Mutates and returns :attr:`interfaces`.
+        """
+        from fastpisa.pae import interface_plddt
+        if not self._plddt_map:
+            raise ValueError("load_plddt(...) must be called before filter_by_plddt")
+        self.analyze()
+        atoms = self._parsed_atoms()
+        kept = []
+        for i in self.interfaces:
+            score = interface_plddt(i, atoms, self._plddt_map)
+            if score is None or score >= min_plddt:
+                kept.append(i)
+        self.interfaces = kept
+        return kept
+
+    # -- visualisation helpers --------------------------------------------
+    def write_pymol_script(self, out_path: str, by: str = "bsa") -> str:
+        """Write a PyMOL ``.pml`` colouring the first interface's residues by
+        BSA. See :func:`fastpisa.viz.write_pymol_script`."""
+        from fastpisa.viz import write_pymol_script
+        self.analyze()
+        return write_pymol_script(str(self.path), self.interfaces[0], out_path, by=by)
+
+    def write_molstar_html(self, out_path: str) -> str:
+        """Write a self-contained Mol* HTML viewer for the first interface."""
+        from fastpisa.viz import write_molstar_html
+        self.analyze()
+        return write_molstar_html(str(self.path), self.interfaces[0], out_path)
+
+    def plot_contact_heatmap(self, interface_id: int = 1, out_path: Optional[str] = None,
+                             **kwargs):
+        """Plot a residue-residue contact heatmap for an interface (needs
+        matplotlib; ``fastpisa[viz]``). See
+        :func:`fastpisa.viz.plot_contact_heatmap`."""
+        from fastpisa.viz import plot_contact_heatmap
+        self.analyze()
+        iface = self.get_interface(interface_id)
+        return plot_contact_heatmap(iface, self._parsed_atoms(), out_path=out_path, **kwargs)
 
     def __repr__(self) -> str:
         state = "unanalyzed"
