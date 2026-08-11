@@ -11,9 +11,54 @@ from fastpisa.parser.pdb_parser import Atom
 from fastpisa.surface.shrake_rupley import get_vdw_radius
 
 
+def compute_buried_surface(
+    asa_alone: Dict[Tuple[int, int], float],
+    asa_combined: Dict[int, float],
+    n_atoms: int,
+    masks: List[np.ndarray],
+) -> Tuple[Dict[int, float], float, float]:
+    """Compute the physically meaningful per-atom buried surface.
+
+    For a given atom, buried surface = (isolated-ASA of the atom's molecule)
+    - (combined-structure ASA). This is the area hidden by intermolecular
+    contact, and is the correct quantity for solvation-energy and per-residue
+    BSA. It replaces the old 4*pi*r_vdw^2 - ASA convention which overstated
+    BSA enormously.
+
+    Also returns the assembly-level totals:
+      assembly_asa = sum of combined ASA
+      assembly_bsa = sum of all isolated ASAs - combined ASA
+
+    Returns
+    -------
+    (per_atom_buried dict, assembly_asa, assembly_bsa)
+    """
+    atom_mol = {}
+    for mol_idx, mask in enumerate(masks):
+        for i in range(n_atoms):
+            if mask[i]:
+                atom_mol[i] = mol_idx
+
+    per_atom_buried: Dict[int, float] = {}
+    for i in range(n_atoms):
+        mi = atom_mol.get(i)
+        if mi is None:
+            per_atom_buried[i] = 0.0
+        else:
+            per_atom_buried[i] = max(
+                asa_alone.get((mi, i), 0.0) - asa_combined.get(i, 0.0), 0.0
+            )
+
+    assembly_asa = float(sum(asa_combined.values()))
+    total_isolated = float(sum(asa_alone.values()))
+    assembly_bsa = max(total_isolated - assembly_asa, 0.0)
+    return per_atom_buried, assembly_asa, assembly_bsa
+
+
 def compute_per_residue_surface(
     atoms: List[Atom],
     atom_asa_combined: Dict[int, float],
+    atom_bsa_buried: Dict[int, float],
     interface_atom_indices: set,
     mol_atoms: List[int],
 ) -> Dict:
@@ -25,10 +70,13 @@ def compute_per_residue_surface(
         All atoms in the structure.
     atom_asa_combined : dict
         Accessible surface area per atom from the combined calculation.
+    atom_bsa_buried : dict
+        Buried surface area per atom = isolated-molecule ASA - combined ASA
+        (the physically meaningful buried area, NOT 4*pi*r^2 - ASA).
     interface_atom_indices : set
         Set of atom indices that are at the interface.
     mol_atoms : list
-        Atom indices belonging to this molecule.
+        Atom indices belonging to this molecule (unused beyond grouping).
 
     Returns
     -------
@@ -67,10 +115,8 @@ def compute_per_residue_surface(
 
         for idx in atom_indices:
             atom = atoms[idx]
-            r = get_vdw_radius(atom.element)
-            total_surf = 4 * np.pi * r ** 2
             asa = atom_asa_combined.get(idx, 0.0)
-            bsa = total_surf - asa
+            bsa = max(atom_bsa_buried.get(idx, 0.0), 0.0)
             asa_list.append(round(asa, 2))
             bsa_list.append(round(bsa, 2))
 

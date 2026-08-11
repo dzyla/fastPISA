@@ -67,6 +67,12 @@ def main():
         "--with-water", dest="exclude_water", action="store_false",
         help="Include ordered water in interface search",
     )
+    parser.add_argument(
+        "--min_css", type=float, default=0.0,
+        help="Only keep interfaces with CSS >= this significance score "
+             "(default 0.0 = keep all). Use e.g. 0.5 to drop weak/"
+             "crystal-packing artifacts.",
+    )
 
     # Output controls
     parser.add_argument(
@@ -118,6 +124,7 @@ def main():
         interface_cutoff=args.interface_cutoff,
         mode=args.mode,
         exclude_water=args.exclude_water,
+        min_css=args.min_css,
     )
 
     t0 = time.monotonic()

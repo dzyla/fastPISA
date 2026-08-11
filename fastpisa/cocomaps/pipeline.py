@@ -27,7 +27,10 @@ from fastpisa.interface.contacts import (
 from fastpisa.energy.energy import (
     calculate_solvation_energy, calculate_binding_energy, calculate_entropy,
 )
-from fastpisa.surface.per_residue import compute_per_residue_surface
+from fastpisa.scoring.scoring import calculate_p_value, calculate_css
+from fastpisa.surface.per_residue import (
+    compute_per_residue_surface, compute_buried_surface,
+)
 from fastpisa.cocomaps.contact_map import (
     build_residue_contact_map, aggregate_residue_pairs,
 )
@@ -44,6 +47,7 @@ def analyze_structure_cocomaps(
     extended_data: bool = False,
     interaction_cutoff: float = 5.0,
     exclude_water: bool = True,
+    min_css: float = 0.0,
 ) -> dict:
     """Run COCOMAPS analysis on a structure.
 
@@ -53,6 +57,11 @@ def analyze_structure_cocomaps(
       - "assembly": assembly JSON doc.
       - "interfaces_obj": list of Interface objects extended with COCOMAPS
         attributes (contact_map, interaction_population).
+
+    min_css : float
+        If > 0, only interfaces with CSS >= min_css are kept (a
+        significance filter that drops weak/artifact crystal-packing
+        contacts). Default 0.0 keeps everything (PISA-compatible).
     """
     # 1. Parse input file
     if input_file.endswith(".cif") or input_file.endswith(".cif.gz"):
@@ -93,18 +102,8 @@ def analyze_structure_cocomaps(
         neighbor_cutoff=neighbor_cutoff,
     )
 
-    bsa_combined = {}
-    for i in range(n_atoms):
-        r = all_radii[i]
-        total_surf = 4 * np.pi * r ** 2
-        bsa_combined[i] = max(total_surf - asa_combined.get(i, 0.0), 0.0)
-
-    total_surface = np.sum(4 * np.pi * all_radii ** 2)
-    assembly_asa = float(sum(asa_combined.values()))
-    assembly_bsa = max(float(total_surface - assembly_asa), 0.0)
-    print(f"Combined ASA: {assembly_asa:.1f} A^2, BSA: {assembly_bsa:.1f} A^2")
-
-    # 4. Per-molecule isolated ASA
+    # 4. Per-molecule isolated ASA (needed for the proper buried-surface
+    #    convention: buried = isolated - combined)
     asa_alone = {}
     for mol_idx in range(n_molecules):
         mask = masks[mol_idx]
@@ -123,6 +122,14 @@ def analyze_structure_cocomaps(
         )
         for local_i, global_i in enumerate(mol_atom_indices):
             asa_alone[(mol_idx, global_i)] = asa.get(global_i, 0.0)
+
+    # 5. Compute the physically meaningful buried surface per atom
+    #    (buried = isolated ASA - combined ASA), replacing the old
+    #    (4*pi*r_vdw^2 - ASA) convention that vastly overstated BSA.
+    bsa_combined, assembly_asa, assembly_bsa = compute_buried_surface(
+        asa_alone, asa_combined, n_atoms, masks
+    )
+    print(f"Combined ASA: {assembly_asa:.1f} A^2, BSA: {assembly_bsa:.1f} A^2")
 
     total_asa_alone = {
         mol_idx: sum(asa_alone.get((mol_idx, i), 0.0)
@@ -188,6 +195,17 @@ def analyze_structure_cocomaps(
             # COCOMAPS interaction population
             interaction_population = _count_interactions(residue_contacts)
 
+            # P-value and CSS (same model as PISA mode)
+            p_value = calculate_p_value(
+                solv_energy, interface_area,
+                assembly_asa if assembly_asa > 0 else 1.0,
+            )
+            css = calculate_css(
+                interface_area, solv_energy, p_value,
+                len(contacts), n_res1 + n_res2,
+                assembly_asa if assembly_asa > 0 else 1.0,
+            )
+
             # Build an Interface object compatible with the PISA output builder
             iface = Interface(
                 interface_id=interface_id,
@@ -196,8 +214,8 @@ def analyze_structure_cocomaps(
                 interface_area=round(interface_area, 2),
                 solvation_energy=round(solv_energy, 2),
                 stabilization_energy=round(binding_energy, 2),
-                p_value=0.0,
-                css=0.0,
+                p_value=round(p_value, 3),
+                css=round(css, 3),
                 number_interface_residues=n_res1 + n_res2,
                 number_hydrogen_bonds=interaction_population.get("hydrogen_bond", 0),
                 number_covalent_bonds=0,
@@ -221,15 +239,21 @@ def analyze_structure_cocomaps(
             mol_info_1["int_natoms"] = len(idx1)
             mol_info_1["int_nres"] = n_res1
             mol_info_1.update(compute_per_residue_surface(
-                atoms, bsa_combined, set(idx1), mol1_ids))
+                atoms, asa_combined, bsa_combined, set(idx1), mol1_ids))
             mol_info_2 = molecules[mol2].copy()
             mol_info_2["int_natoms"] = len(idx2)
             mol_info_2["int_nres"] = n_res2
             mol_info_2.update(compute_per_residue_surface(
-                atoms, bsa_combined, set(idx2), mol2_ids))
+                atoms, asa_combined, bsa_combined, set(idx2), mol2_ids))
             iface.molecules = [mol_info_1, mol_info_2]
 
             interfaces.append(iface)
+
+    # 5b. Optional significance filter (drop weak / artifact interfaces)
+    if min_css > 0:
+        interfaces = [i for i in interfaces if i.css >= min_css]
+        for idx, iface in enumerate(interfaces):
+            iface.interface_id = idx + 1
 
     # 6. Assembly statistics (same structure as PISA)
     from fastpisa.pipeline import _build_formula, _build_composition

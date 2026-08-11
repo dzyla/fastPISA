@@ -35,7 +35,9 @@ from fastpisa.energy.energy import (
 )
 from fastpisa.scoring.scoring import calculate_p_value, calculate_css
 from fastpisa.output.json_output import build_interfaces_json, build_assembly_json
-from fastpisa.surface.per_residue import compute_per_residue_surface
+from fastpisa.surface.per_residue import (
+    compute_per_residue_surface, compute_buried_surface,
+)
 
 
 def analyze_structure(
@@ -48,6 +50,7 @@ def analyze_structure(
     asis: bool = False,
     extended_data: bool = False,
     exclude_water: bool = True,
+    min_css: float = 0.0,
 ) -> dict:
     """Run the full PISA analysis on a structure.
 
@@ -69,6 +72,10 @@ def analyze_structure(
         If True, only calculate interfaces (no assembly prediction).
     extended_data : bool
         If True, include extended -list data.
+    min_css : float
+        If > 0, only interfaces with CSS >= min_css are kept (a
+        significance filter that drops weak/artifact crystal-packing
+        contacts). Default 0.0 keeps everything.
 
     Returns
     -------
@@ -118,19 +125,8 @@ def analyze_structure(
         neighbor_cutoff=neighbor_cutoff,
     )
 
-    # 5. Calculate BSA per atom for the combined structure
-    bsa_combined = {}
-    for i in range(n_atoms):
-        r = all_radii[i]
-        total_surf = 4 * np.pi * r ** 2
-        bsa_combined[i] = max(total_surf - asa_combined.get(i, 0.0), 0.0)
-
-    total_surface = np.sum(4 * np.pi * all_radii ** 2)
-    assembly_asa = float(sum(asa_combined.values()))
-    assembly_bsa = max(float(total_surface - sum(asa_combined.values())), 0.0)
-    print(f"Combined ASA: {assembly_asa:.1f} A^2, BSA: {assembly_bsa:.1f} A^2")
-
-    # 6. Calculate ASA for each molecule individually
+    # 5. Calculate isolated ASA for each molecule (needed for the proper
+    #    buried-surface convention: buried = isolated - combined)
     asa_alone = {}
     for mol_idx in range(n_molecules):
         mask = masks[mol_idx]
@@ -149,6 +145,14 @@ def analyze_structure(
             )
             for local_i, global_i in enumerate(mol_atom_indices):
                 asa_alone[(mol_idx, global_i)] = asa.get(global_i, 0.0)
+
+    # 6. Compute the physically meaningful buried surface per atom
+    #    (buried = isolated ASA - combined ASA), replacing the old
+    #    (4*pi*r_vdw^2 - ASA) convention that vastly overstated BSA.
+    bsa_combined, assembly_asa, assembly_bsa = compute_buried_surface(
+        asa_alone, asa_combined, n_atoms, masks
+    )
+    print(f"Combined ASA: {assembly_asa:.1f} A^2, BSA: {assembly_bsa:.1f} A^2")
 
     total_asa_alone = {}
     for mol_idx in range(n_molecules):
@@ -267,19 +271,27 @@ def analyze_structure(
             mol_info_1["int_natoms"] = len(idx1)
             mol_info_1["int_nres"] = n_res1
             res_data_1 = compute_per_residue_surface(
-                atoms, bsa_combined, set(idx1), [i for i in range(n_atoms) if mask1[i]]
+                atoms, asa_combined, bsa_combined,
+                set(idx1), [i for i in range(n_atoms) if mask1[i]],
             )
             mol_info_1.update(res_data_1)
             mol_info_2 = molecules[mol2].copy()
             mol_info_2["int_natoms"] = len(idx2)
             mol_info_2["int_nres"] = n_res2
             res_data_2 = compute_per_residue_surface(
-                atoms, bsa_combined, set(idx2), [i for i in range(n_atoms) if mask2[i]]
+                atoms, asa_combined, bsa_combined,
+                set(idx2), [i for i in range(n_atoms) if mask2[i]],
             )
             mol_info_2.update(res_data_2)
 
             iface.molecules = [mol_info_1, mol_info_2]
             interfaces.append(iface)
+
+    # 7b. Optional significance filter (drop weak / artifact interfaces)
+    if min_css > 0:
+        interfaces = [i for i in interfaces if i.css >= min_css]
+        for idx, iface in enumerate(interfaces):
+            iface.interface_id = idx + 1
 
     # 8. Calculate assembly-level statistics
     n_interfaces = len(interfaces)

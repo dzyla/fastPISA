@@ -55,6 +55,9 @@ class PISAInterfaceAnalyzer:
     exclude_water : bool
         Exclude ordered water (HOH etc.) from the interface search
         (default True).
+    min_css : float
+        Minimum CSS score for an interface to be kept (significance filter).
+        ``0.0`` (default) keeps every detected interface.
 
     Attributes
     ----------
@@ -77,6 +80,7 @@ class PISAInterfaceAnalyzer:
         interface_cutoff: float = 5.0,
         mode: str = "pisa",
         exclude_water: bool = True,
+        min_css: float = 0.0,
     ):
         self.path = Path(path)
         if not self.path.exists():
@@ -88,6 +92,7 @@ class PISAInterfaceAnalyzer:
         self.interface_cutoff = interface_cutoff
         self.mode = mode
         self.exclude_water = exclude_water
+        self.min_css = min_css
 
         # Populated by analyze()
         self.interfaces: List[Interface] = []
@@ -118,6 +123,7 @@ class PISAInterfaceAnalyzer:
             point_density=self.point_density,
             interface_cutoff=self.interface_cutoff,
             exclude_water=self.exclude_water,
+            min_css=self.min_css,
         )
         if self.mode == "cocomaps":
             result = analyze_structure_cocomaps(**kwargs)

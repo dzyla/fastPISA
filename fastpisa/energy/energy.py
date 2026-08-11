@@ -117,11 +117,9 @@ def calculate_binding_energy(
     """
     contact_energy, _, _, _, _ = calculate_contact_energy(contacts)
 
-    # Electrostatic energy (simplified): proportional to salt bridges
-    n_salt = sum(1 for c in contacts if c.bond_type == "salt_bridge")
-    electrostatic_energy = -0.5 * n_salt
-
-    binding_energy = solv_energy + contact_energy + electrostatic_energy
+    # Note: salt bridges are already included in contact_energy. There is no
+    # separate electrostatic term (they were previously counted twice).
+    binding_energy = solv_energy + contact_energy
     return binding_energy
 
 

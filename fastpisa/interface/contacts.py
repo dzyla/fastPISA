@@ -116,65 +116,84 @@ COVALENT_DISTANCE = 2.2
 
 
 def is_hydrogen_bond(
+    atom1_resname: str,
     atom1_name: str,
+    atom1_element: str,
+    atom2_resname: str,
     atom2_name: str,
+    atom2_element: str,
     distance: float,
 ) -> bool:
-    """Check if a contact is a hydrogen bond.
+    """Check if a contact is a hydrogen bond (rule-based, no explicit H needed).
 
-    H-bonds occur between a hydrogen atom attached to a donor (N or O)
-    and an acceptor (N or O). The donor-H...acceptor distance should
-    be less than HBOND_DISTANCE (3.5 A).
+    Delegates to the same donor/acceptor chemistry used by COCOMAPS mode
+    (``fastpisa.cocomaps.interactions._hbond``). A contact is an H-bond when
+    one side provides a donor (N-H / O-H) and the other an acceptor (N/O),
+    within HBOND_DISTANCE (3.5 A). Because most modern structures (AlphaFold,
+    cryo-EM) contain no explicit hydrogen atoms, this must NOT require an atom
+    named ending in 'H'.
     """
-    # Atom names ending in H are hydrogens
-    h1 = atom1_name.strip().endswith("H")
-    h2 = atom2_name.strip().endswith("H")
-
-    # At least one must be a hydrogen
-    if not (h1 or h2):
+    from fastpisa.cocomaps.interactions import _hbond
+    if distance >= HBOND_DISTANCE:
         return False
-
-    # The non-H atom must be N or O
-    heavy = atom1_name.strip() if h2 else atom2_name.strip()
-    heavy_el = _element_from_name(heavy)
-    if heavy_el not in ("N", "O"):
-        return False
-
-    return distance < HBOND_DISTANCE
+    return _hbond(
+        atom1_resname.strip().upper(),
+        atom1_name.strip().upper(),
+        atom2_resname.strip().upper(),
+        atom2_name.strip().upper(),
+        atom1_element.upper().strip(),
+        atom2_element.upper().strip(),
+    )
 
 
 def is_salt_bridge(
+    atom1_resname: str,
     atom1_name: str,
+    atom2_resname: str,
     atom2_name: str,
     distance: float,
-    atom1_element: str = "",
-    atom2_element: str = "",
 ) -> bool:
     """Check if a contact is a salt bridge (ionic interaction).
 
-    Salt bridges form between positively charged (N, Lys/Arg/His) and
-    negatively charged (O, Asp/Glu) atoms.
+    A salt bridge is between a positive side-chain atom (Arg NH1/NH2, Lys NZ,
+    His ND1/NE2) and a negative side-chain atom (Asp OD1/OD2, Glu OE1/OE2).
+    It uses the CHARGED_ATOMS table shared with COCOMAPS mode -- NOT a generic
+    'any N-O pair', which would mis-classify backbone H-bonds as salt bridges.
     """
+    from fastpisa.cocomaps.interactions import CHARGED_ATOMS
     if distance > SALT_BRIDGE_DISTANCE:
         return False
-
-    el1 = atom1_element.upper() if atom1_element else _element_from_name(atom1_name)
-    el2 = atom2_element.upper() if atom2_element else _element_from_name(atom2_name)
-
-    charged_pairs = {("N", "O"), ("O", "N")}
-    if (el1, el2) not in charged_pairs:
+    r1 = atom1_resname.strip().upper()
+    a1 = atom1_name.strip().upper()
+    r2 = atom2_resname.strip().upper()
+    a2 = atom2_name.strip().upper()
+    c1 = CHARGED_ATOMS.get((r1, a1)) if (r1, a1) in CHARGED_ATOMS else None
+    c2 = CHARGED_ATOMS.get((r2, a2)) if (r2, a2) in CHARGED_ATOMS else None
+    if c1 is None or c2 is None:
         return False
-
-    return True
+    return c1 * c2 < 0
 
 
 def is_disulfide(
-    atom1_name: str,
-    atom2_name: str,
+    atom1_resname: str,
+    atom2_resname: str,
+    atom1_element: str,
+    atom2_element: str,
     distance: float,
 ) -> bool:
-    """Check if a contact is a disulfide bond (S-S)."""
-    return distance < DISULFIDE_DISTANCE
+    """Check if a contact is a disulfide bond (Cys S-gamma ... S-gamma).
+
+    Requires both atoms to be sulfur AND both residues to be CYS. Fixes the
+    previous bug where ANY atom pair closer than 3.0 A was counted as a
+    disulfide regardless of element/residue.
+    """
+    return (
+        atom1_element.upper().strip() == "S"
+        and atom2_element.upper().strip() == "S"
+        and atom1_resname.strip().upper() == "CYS"
+        and atom2_resname.strip().upper() == "CYS"
+        and distance < DISULFIDE_DISTANCE
+    )
 
 
 def _element_from_name(atom_name: str) -> str:
@@ -260,14 +279,18 @@ def find_contacts(
             a1 = atoms[idx1]
             a2 = atoms[idx2]
 
-            # Classify contact
-            if d < COVALENT_DISTANCE:
-                btype = "covalent"
-            elif is_disulfide(a1.atom_name, a2.atom_name, d):
+            # Classify contact (disulfide must be checked before generic
+            # covalent so real Cys S-S bonds are not swallowed by 'covalent')
+            if is_disulfide(a1.res_name, a2.res_name, a1.element, a2.element, d):
                 btype = "disulfide"
-            elif is_salt_bridge(a1.atom_name, a2.atom_name, d, a1.element, a2.element):
+            elif d < COVALENT_DISTANCE:
+                btype = "covalent"
+            elif is_salt_bridge(a1.res_name, a1.atom_name, a2.res_name, a2.atom_name, d):
                 btype = "salt_bridge"
-            elif is_hydrogen_bond(a1.atom_name, a2.atom_name, d):
+            elif is_hydrogen_bond(
+                a1.res_name, a1.atom_name, a1.element,
+                a2.res_name, a2.atom_name, a2.element, d,
+            ):
                 btype = "hbond"
             else:
                 btype = "other"
