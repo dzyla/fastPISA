@@ -5,9 +5,25 @@ The values below are derived from the literature (Ooi et al. 1987,
 Srinivasan et al. 1999, and the PISA/CryoEM ASP tables used by the
 PDBe PISA implementation).  Each parameter is a free energy of
 solvation per unit buried surface area (kcal mol^-1 A^-2) for a given
-atom type.  The sign convention follows PISA: positive values mean
-that burying this atom type in an interface is favourable (negative
-contribution to the free energy of dissociation).
+atom type.
+
+SIGN CONVENTION -- one statement, because the two modules previously disagreed.
+`calculate_solvation_energy` sums ``asp * bsa`` with no negation and documents its
+result as "negative = favourable", so for that sum to come out negative on a
+favourable interface the ASP of a favourably-buried atom must itself be NEGATIVE.
+This file's own values follow that: polar N is -0.0623 and polar O is -0.1057,
+while aliphatic C is +0.0259. The docstring here previously claimed the opposite
+("positive values mean burying is favourable"), which contradicted both the code
+and the energy module and made the sign of the result ambiguous to a reader.
+
+CALIBRATION STATUS -- these values do NOT reproduce CCP4 PISA's dG. Measured
+against PISA v2.2.0 over 63 matched interfaces from 7 antibody-antigen complexes,
+the resulting solvation energy relates to PISA's dG with Spearman -0.408
+(p = 0.015, n = 35) on ANTIBODY-ANTIGEN interfaces but +0.596 on antibody-antibody
+ones, so the pooled figure (+0.324) is a Simpson's paradox and the agreement is
+class-dependent; magnitudes run about 6x larger than PISA's. Interface AREA agrees
+at Pearson 0.9996 and salt-bridge counts at Spearman 0.998, so prefer those as
+quantitative outputs and treat these energies as relative, uncalibrated indicators.
 
 The standard ASP set used by PISA assigns parameters to atom types:
 C, N, O, S, P, and the heteroatoms commonly found in protein structures.
