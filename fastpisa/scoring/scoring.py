@@ -69,13 +69,26 @@ def calculate_p_value(
     # The mean solvation energy scales with interface area relative to total surface
     # The standard deviation scales with sqrt(interface_area)
 
-    # Empirical constants from PISA calibration
-    # These values are chosen to reproduce PISA's P-value distribution
-    mean_coeff = 0.030  # kcal/mol per A^2 of interface area
-    std_coeff = 0.15    # kcal/mol per sqrt(A^2) of interface area
+    # Empirical constants. BOTH terms must scale the same way in interface area or the
+    # z-score diverges and the P-value saturates at its clamp for every real interface.
+    #
+    # The previous form used mean = 0.030 * area with std = 0.15 * sqrt(area): the mean
+    # grows LINEARLY while the spread grows as sqrt(area), so z ~ -0.2 * sqrt(area) and
+    # runs away with size. Measured on 63 interfaces from 7 antibody-antigen references,
+    # EVERY p-value came back as exactly 0.001 -- the clamp floor -- including a 23.6 A^2
+    # contact (z = -4.89) and a 3692 A^2 interface (z = -31.5). A field with zero variance
+    # carries no information, and because CSS takes P as one of its four terms, CSS's
+    # specificity contribution was silently inert.
+    #
+    # Both moments are now per unit area, so z is scale-free in interface size and the
+    # P-value again discriminates hydrophobic from polar interfaces of any size. The
+    # constants remain UNCALIBRATED against Krissinel's fitted model (see the warning
+    # above); the fix restores variance, it does not claim PDBe-matching absolute values.
+    mean_coeff = -0.025  # kcal/mol per A^2: a typical interface buries favourably
+    std_coeff = 0.020    # kcal/mol per A^2 of spread about that expectation
 
     mean = mean_coeff * interface_area
-    std = std_coeff * np.sqrt(interface_area)
+    std = std_coeff * interface_area
 
     if std < 0.01:
         std = 0.01
