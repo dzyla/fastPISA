@@ -22,6 +22,12 @@ env/
 output/
 out/
 *.xml
+# ...but `output/` above also matches the SOURCE package fastpisa/output/, which is why
+# it was never committed: `from fastpisa.api import PISAInterfaceAnalyzer` then fails with
+# ModuleNotFoundError from any clean clone, because pipeline.py imports
+# fastpisa.output.json_output. Re-include the package explicitly.
+!fastpisa/output/
+!fastpisa/output/*.py
 
 # OS
 .DS_Store
