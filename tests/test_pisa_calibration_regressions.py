@@ -135,3 +135,38 @@ class TestAspSignConvention:
     def test_named_atoms_take_precedence_over_the_element_fallback(self):
         # Pinning the documented order, so a future refactor cannot silently invert it.
         assert get_asp("CA", "O") == pytest.approx(get_asp("CA", "N"))
+
+
+class TestClaimsAreClassAware:
+    """A pooled correlation over mixed interface classes can invert the per-class truth.
+
+    Measured on the 63-interface calibration set, fastPISA's solvation energy relates to
+    PISA's dG with Spearman -0.408 on antibody-antigen interfaces but +0.596 on
+    antibody-antibody ones; the pooled figure is +0.324. Any claim about an energy
+    quantity must therefore name its interface class. This is a documentation invariant
+    rather than a numeric one -- it exists so a future edit cannot quietly reintroduce a
+    pooled energy claim as if it were general.
+    """
+
+    def _module_text(self, relpath):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, relpath)) as fh:
+            return fh.read()
+
+    def test_asp_table_states_the_class_dependence(self):
+        text = self._module_text("fastpisa/energy/asp_table.py")
+        assert "class-dependent" in text
+        assert "antibody-antigen" in text
+
+    def test_asp_table_does_not_claim_a_sign_flip_would_fix_it(self):
+        """Spearman is invariant under negation, so negating the table cannot repair it."""
+        text = self._module_text("fastpisa/energy/asp_table.py")
+        assert "SIGN FLIP DOES NOT FIX THIS" in text, (
+            "the docstring must say explicitly that negating the ASP values only mirrors "
+            "the correlation (-0.408 -> +0.408) without making the model correct, or a "
+            "future reader will try the one-line fix that cannot work")
+
+    def test_scoring_docstring_warns_the_pvalue_is_uncalibrated(self):
+        text = self._module_text("fastpisa/scoring/scoring.py")
+        assert "UNCALIBRATED" in text
