@@ -33,4 +33,8 @@ out/
 .DS_Store
 
 # Testing / notebooks
-.ipynb_checkpoints/tests/data/reference/assemblies/
+.ipynb_checkpoints/
+
+# Large assembly-coordinate cache (refetched on demand)
+tests/data/reference/assemblies/
+
