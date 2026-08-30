@@ -52,11 +52,18 @@ def build_residue_contact_map(
     mol1_atom_indices,
     mol2_atom_indices,
     interface_cutoff: float = 5.0,
+    hbond_pairs: Optional[set] = None,
 ) -> List[ResidueContact]:
     """Build a residue-residue contact map between two molecules.
 
     Returns a list of ResidueContact objects (one per contacting atom pair),
     sorted by distance. Each is classified by interaction type.
+
+    ``hbond_pairs`` (optional): set of ``(min_idx, max_idx)`` atom-index
+    pairs pre-validated by the geometric H-bond detector
+    (:mod:`fastpisa.interface.bonds`). When given, the hydrogen_bond class
+    uses it instead of the table-only rule, so the contact map agrees with
+    the PISA-calibrated bond counts.
     """
     contacts = []
 
@@ -79,6 +86,9 @@ def build_residue_contact_map(
             if d >= interface_cutoff:
                 continue
 
+            is_hb = None
+            if hbond_pairs is not None:
+                is_hb = (min(g1, g2), max(g1, g2)) in hbond_pairs
             itype = classify_atom_pair(
                 res1=a1.res_name,
                 atom1=a1.atom_name,
@@ -89,6 +99,7 @@ def build_residue_contact_map(
                 dist=d,
                 vdw_radius1=get_vdw_radius(a1.element),
                 vdw_radius2=get_vdw_radius(a2.element),
+                is_hbond=is_hb,
             )
             contacts.append(ResidueContact(
                 atom1_idx=g1,

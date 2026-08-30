@@ -135,7 +135,9 @@ class Interface:
 
 
 # Distance cutoffs for bond classification (A)
-HBOND_DISTANCE = 3.5
+# H-bond donor-acceptor cutoff matches original PISA (its reported H-bond
+# lists contain donor-acceptor distances up to ~3.89 A; 3.5 undercounted).
+HBOND_DISTANCE = 3.89
 SALT_BRIDGE_DISTANCE = 4.0
 DISULFIDE_DISTANCE = 3.0
 OTHER_CONTACT_DISTANCE = 5.0
@@ -184,20 +186,19 @@ def is_salt_bridge(
 ) -> bool:
     """Check if a contact is a salt bridge (ionic interaction).
 
-    A salt bridge is between a positive side-chain atom (Arg NH1/NH2, Lys NZ,
-    His ND1/NE2) and a negative side-chain atom (Asp OD1/OD2, Glu OE1/OE2).
-    It uses the CHARGED_ATOMS table shared with COCOMAPS mode -- NOT a generic
-    'any N-O pair', which would mis-classify backbone H-bonds as salt bridges.
+    A salt bridge is between a positive side-chain atom (Arg NE/NH1/NH2,
+    Lys NZ, His ND1/NE2) and a negative side-chain atom (Asp OD1/OD2,
+    Glu OE1/OE2). It uses the SALT_CHARGES table (fastpisa.interface.bonds)
+    validated against original PISA's salt-bridge lists -- NOT a generic
+    'any N-O pair', which would mis-classify backbone H-bonds as salt
+    bridges, and NOT the cation-pi CHARGED_ATOMS table (whose Arg CZ carbon
+    is not a salt-bridge partner).
     """
-    from fastpisa.cocomaps.interactions import CHARGED_ATOMS
+    from fastpisa.interface.bonds import salt_charge
     if distance > SALT_BRIDGE_DISTANCE:
         return False
-    r1 = atom1_resname.strip().upper()
-    a1 = atom1_name.strip().upper()
-    r2 = atom2_resname.strip().upper()
-    a2 = atom2_name.strip().upper()
-    c1 = CHARGED_ATOMS.get((r1, a1)) if (r1, a1) in CHARGED_ATOMS else None
-    c2 = CHARGED_ATOMS.get((r2, a2)) if (r2, a2) in CHARGED_ATOMS else None
+    c1 = salt_charge(atom1_resname, atom1_name)
+    c2 = salt_charge(atom2_resname, atom2_name)
     if c1 is None or c2 is None:
         return False
     return c1 * c2 < 0
@@ -417,22 +418,23 @@ def get_molecules(structure):
             })
             mol_id += 1
 
-        # Ligand molecules: group atoms into residue units (by CCD + auth seq)
+        # Ligand molecules: group atoms into residue units (by CCD + auth seq
+        # + insertion code, matching original PISA's monomer naming)
         for ccd, atoms_list in ligand_groups.items():
-            # group by auth_seq_id so multiple copies of the same ligand are distinct
             by_seq = {}
             for a in atoms_list:
-                by_seq.setdefault(a.auth_seq_id, []).append(a)
-            for seq_id in sorted(by_seq):
+                by_seq.setdefault((a.auth_seq_id, (a.icode or "").strip()), []).append(a)
+            for seq_id, icode in sorted(by_seq):
                 molecules.append({
                     "molecule_id": mol_id,
                     "molecule_class": "Ligand",
-                    "chain_id": f"[{ccd}]{chain.auth_asym_id}:{seq_id}",
+                    "chain_id": f"[{ccd}]{chain.auth_asym_id}:{seq_id}{icode}",
                     "auth_asym_id": chain.auth_asym_id,
                     "label_asym_id": chain.label_asym_id,
                     "label_comp_id": ccd,
                     "ccd_id": ccd,
                     "auth_seq_id": seq_id,
+                    "icode": icode,
                     "chain_type": "ligand",
                 })
                 mol_id += 1
@@ -457,10 +459,12 @@ def get_molecule_masks(atoms, molecules):
         if mol_chain_type == "ligand":
             auth_chain = mol["auth_asym_id"]
             auth_seq = mol["auth_seq_id"]
+            icode = mol.get("icode", "")
             ccd = mol.get("ccd_id", None)
             for i, atom in enumerate(atoms):
                 if (atom.auth_asym_id == auth_chain and
                         atom.auth_seq_id == auth_seq and
+                        (atom.icode or "").strip() == icode and
                         atom.label_comp_id == ccd):
                     mask[i] = True
         else:

@@ -144,10 +144,16 @@ def classify_atom_pair(
     dist: float,
     vdw_radius1: float,
     vdw_radius2: float,
+    is_hbond: Optional[bool] = None,
 ) -> str:
     """Classify the interaction type for a single atom-atom contact.
 
     Returns one of INTERACTION_TYPES.
+
+    ``is_hbond``: pre-computed geometric H-bond verdict for this pair (from
+    :mod:`fastpisa.interface.bonds`). When provided it replaces the
+    table-only ``_hbond`` rule so all fastPISA outputs share one H-bond
+    definition; ``None`` falls back to the legacy rule.
     """
     res1_u = res1.strip().upper()
     res2_u = res2.strip().upper()
@@ -181,10 +187,12 @@ def classify_atom_pair(
         return "metal_mediated"
 
     # 5. Hydrogen bond / weak H-bond (before clash: H-bonds are short-range).
-    #    The strong H-bond uses the SAME HBOND_DISTANCE (3.5 A) as the PISA-mode
-    #    classifier so both modes report identical H-bond counts (single source
-    #    of truth for atom chemistry). Weak C-H...O/N keeps its own 3.8 A band.
-    if dist < HBOND_DISTANCE and _hbond(res1_u, a1, res2_u, a2, el1_u, el2_u):
+    #    When the caller supplies the geometric verdict (fastpisa.interface.
+    #    bonds; distance + antecedent angles), use it -- single source of
+    #    truth with the PISA-calibrated counts. Weak C-H...O/N keeps its own
+    #    3.8 A band.
+    if is_hbond if is_hbond is not None else (
+            dist < HBOND_DISTANCE and _hbond(res1_u, a1, res2_u, a2, el1_u, el2_u)):
         return "hydrogen_bond"
     if dist < 3.8:
         # weak C-H ... O/N
