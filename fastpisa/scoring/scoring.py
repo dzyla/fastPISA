@@ -102,7 +102,12 @@ def calculate_p_value(
     interface_area: float,
     total_asa: float,
 ) -> float:
-    """Calculate the P-value for an interface.
+    """LEGACY P-value model (superseded by :func:`calculate_p_value_pisa`).
+
+    The pipelines use :func:`calculate_p_value_pisa`, which implements
+    PISA's actual random-surface-patch definition and is validated against
+    the EBI PISA reference. This simpler area-scaled model is kept only for
+    backward compatibility with external callers.
 
     The P-value is defined as the probability that a random interface
     of the same area would have a solvation energy gain at least as
@@ -192,7 +197,10 @@ def calculate_css(
     n_residues: int,
     total_asa: float,
 ) -> float:
-    """Calculate the Complexation Significance Score (CSS).
+    """LEGACY CSS composite (superseded by :func:`calculate_css_pisa`).
+
+    The pipelines use :func:`calculate_css_pisa`, calibrated against original
+    PISA's CSS. Kept for backward compatibility with external callers.
 
     CSS is a composite score that combines:
     - Interface area (normalised by total surface area)

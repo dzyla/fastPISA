@@ -24,8 +24,15 @@ _have_reference = all(
     for pid in BENCHMARK_ENTRIES
 ) if os.path.isdir(REFERENCE_DIR) else False
 
-pytestmark = pytest.mark.skipif(
-    not _have_reference, reason="reference benchmark cache not present")
+from fastpisa.surface.freesasa_backend import available as _freesasa_available
+
+pytestmark = [
+    pytest.mark.skipif(not _have_reference,
+                       reason="reference benchmark cache not present"),
+    pytest.mark.skipif(not _freesasa_available(),
+                       reason="21-entry benchmark needs the FreeSASA C "
+                              "backend (pure-Python ASA is too slow here)"),
+]
 
 
 @pytest.fixture(scope="module")

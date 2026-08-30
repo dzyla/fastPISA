@@ -4,61 +4,83 @@ Context for Claude Code (and similar coding agents) working in this repository.
 
 ## Project summary
 
-`fastPISA` is a dependency-light Python package that reproduces the CCP4/PDBe **PISA**
-interface analysis locally, with a second **COCOMAPS 2.0** mode. Input: PDB or mmCIF
-(AlphaFold-predicted complexes supported). Output: PDBe-PISA-shaped JSON plus, in
-COCOMAPS mode, residue-residue contact maps with atomic interaction-type labels.
+`fastPISA` is a dependency-light Python package that reproduces the CCP4/PDBe
+**PISA** interface analysis locally — numerically calibrated against the
+original engine — plus a **COCOMAPS 2.0** contact-map mode. Input: PDB(.gz) or
+mmCIF (AlphaFold-predicted complexes supported). Output: PDBe-PISA-shaped JSON;
+the default `combined` mode carries both PISA thermodynamics and the COCOMAPS
+contact map on every interface.
 
 ## Build / run
 
 ```bash
 pip install -e .
-pip install freesasa gemmi   # optional speed + mmCIF
+pip install freesasa gemmi   # freesasa strongly recommended (15x ASA speed)
 
-# CLI
-python -m fastpisa.cli in.pdb --pdb_id X --mode pisa -o out/
-python -m fastpisa.cli complex.cif --mode cocomaps --time --json-summary -o out/
+# CLI (combined mode is the default)
+python -m fastpisa.cli in.pdb --pdb_id X -o out/
+python -m fastpisa.cli complex.cif --mode pisa --time --json-summary -o out/
 
 # Python
 from fastpisa.api import PISAInterfaceAnalyzer
-ana = PISAInterfaceAnalyzer("in.pdb", pdb_id="X", mode="pisa"); ana.analyze()
+ana = PISAInterfaceAnalyzer("in.pdb", pdb_id="X"); ana.analyze()
 ana.interfaces        # list of fastpisa.interface.contacts.Interface
 ana.summary(), ana.write_json("out/")
 ```
 
 ## Commands you'll most often run
 
-- `python -m fastpisa.cli <file> --mode pisa --json-summary --time -o <dir>` — one run
-- `pip install freesasa` / `pip install gemmi` — enable fast ASA / mmCIF support
+- `pytest tests/ -q` — full suite incl. the offline accuracy regression vs
+  original PISA (`tests/test_vs_pdbe_pisa.py`, cached EBI reference data)
+- `python examples/compare_vs_pisa.py` — head-to-head vs original PISA
+  (add entries with `--fetch <pdbid>`; needs network only for fetching)
+
+## Architecture in one line
+
+ALL modes (`combined`/`pisa`/`cocomaps`) run `fastpisa/core.py` exactly once —
+identical interfaces by construction; `pipeline.py` and `cocomaps/pipeline.py`
+are thin wrappers.
 
 ## Conventions & non-obvious traps (READ before editing)
 
-- **Never break the "two modes find identical interfaces" invariant.** PISA and
-  COCOMAPS share `fastpisa/interface/contacts.py` + the ASA code. Verify both modes
-  give the same interface IDs after any shared change.
-- **Molecules by residue composition, not `chain.group`.** The parser flag is sticky:
-  a protein chain carrying a ligand gets mislabeled `ligand`. Use standard AA/NA sets.
-- **Water is excluded from interface search** by default; polymer masks must require a
-  standard polymer residue, not just a matching chain ID.
+- **Calibration is load-bearing.** `energy/asp_table.py` (sigma per atom
+  class), `energy/energy.py` (E_HBOND/E_SALT_BRIDGE/E_DISULFIDE — recovered
+  EXACTLY from PISA), `scoring/scoring.py` (P_VALUE_Z_SCALE, CSS logistic) are
+  fitted against the EBI reference; `tests/test_vs_pdbe_pisa.py` pins the
+  accuracy. Don't tweak constants without re-running
+  `examples/compare_vs_pisa.py`.
+- **Interfaces are defined by buried area (pair dASA > 0), not by 5 A atom
+  contacts** — PISA semantics. The shadow cutoff (2*r_max + 2*probe) screens
+  candidate pairs; per-pair ASA is evaluated only near the interface.
+- **Bond classes are independent predicates** (a charged pair can be both salt
+  bridge and H-bond — PISA lists it in both tables). Counting lives in
+  `interface/bonds.py` (geometric H-bonds: 3.89 A + antecedent angles +
+  capacities; explicit-H criteria when the model has hydrogens).
+- **Hydrogens carry no surface**: masks are heavy-atom-only; H atoms stay in
+  the parsed list for H-bond geometry.
+- **Molecules by residue composition, not `chain.group`.** The parser flag is
+  sticky. Standard AA/NA sets live in `interface/contacts.py` (incl. modified
+  residues like MSE/CCS/PTR — splitting them out fabricates interfaces).
+- **Water is excluded from interface search** by default.
 - **Element = PDB columns 77–78.** Never derive from atom-name prefix.
-- **FreeSASA:** do NOT call `Parameters.setAlgorithm("ShrakeRupley")` (segfaults on
-  single-atom inputs). `calcCoord` wants a flat 3N coord array; `atom_indices` maps
-  output indices only — callers pre-subset `atoms`.
+- **FreeSASA:** do NOT call `Parameters.setAlgorithm("ShrakeRupley")`
+  (segfaults on single-atom inputs). `calcCoord` wants a flat 3N coord array;
+  `atom_indices` maps output indices only — callers pre-subset `atoms`.
 - **gemmi 0.7.x:** `Block` has no `.tags` / `find_tags_loop`; use
   `block.find("_atom_site.", [tag, ...])`.
 
 ## Verify after changes
 
-```python
-from fastpisa.api import PISAInterfaceAnalyzer
-PISAInterfaceAnalyzer("1ktz.pdb", mode="pisa").analyze()
-PISAInterfaceAnalyzer("1ktz.pdb", mode="cocomaps").analyze()
+```bash
+pytest tests/ -q                          # must stay green (esp. test_vs_pdbe_pisa)
+python examples/compare_vs_pisa.py        # accuracy table vs original PISA
 ```
-Both must agree on interface IDs. `1ktz.pdb` (chains A/B) is the canonical small test.
 
 ## Linkage
 
-- Full pitfalls + skill: `fastpisa-cocomaps` (Hermes skill). Read AGENTS.md for the
-  same invariants in more detail.
 - PISA paper: Krissinel & Henrick, JMB 372:774–797 (2007). Schema: PDBe-KB/pdbe-pisa-json.
+- Original PISA ground truth: EBI service `https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/interfaces.pisa?<pdbid>`
+  (fetch/parse via `fastpisa/reference/`); CCP4 binary tests need the lab machine
+  (paths overridable via FASTPISA_PISA_BIN / FASTPISA_CASP17_DIR / FASTPISA_OPENDDE_AB).
 - COCOMAPS 2.0: Chawla et al., Bioinformatics (2025), PMC12684709.
+- Design spec: docs/superpowers/specs/2026-08-29-pisa-parity-combined-mode-design.md

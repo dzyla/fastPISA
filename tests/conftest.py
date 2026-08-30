@@ -10,13 +10,21 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(REPO_ROOT, "tests", "data")
 KTZ = os.path.join(DATA_DIR, "1ktz.pdb")
 
-# Optional external structure used for integration / reproducibility tests.
-OPENDDE_AB = "/home/dzyla/dzyla-lab_home/Code/OpenDDE/outputs/antibody_complexes/results/MeV3920_F4-B05/MeV3920_F4-B05/seed_101/predictions/MeV3920_F4-B05_sample_0.cif"
-CASP17_DIR = "/home/dzyla/dzyla-lab_home/Code/OpenDDE/outputs/casp17_antibodies/results"
+# Optional external resources for integration / reproducibility tests.
+# Overridable via environment variables so the suite is portable; the
+# defaults are the lab-machine locations.
+OPENDDE_AB = os.environ.get(
+    "FASTPISA_OPENDDE_AB",
+    "/home/dzyla/dzyla-lab_home/Code/OpenDDE/outputs/antibody_complexes/results/MeV3920_F4-B05/MeV3920_F4-B05/seed_101/predictions/MeV3920_F4-B05_sample_0.cif",
+)
+CASP17_DIR = os.environ.get(
+    "FASTPISA_CASP17_DIR",
+    "/home/dzyla/dzyla-lab_home/Code/OpenDDE/outputs/casp17_antibodies/results",
+)
 
 # Optional original CCP4 PISA binary + config (for reproducibility tests).
-PISA_BIN = "/programs/xtal/ccp4-9/bin/pisa"
-PISA_CFG = "/tmp/pisa_ref/mypisa.cfg"
+PISA_BIN = os.environ.get("FASTPISA_PISA_BIN", "/programs/xtal/ccp4-9/bin/pisa")
+PISA_CFG = os.environ.get("FASTPISA_PISA_CFG", "/tmp/pisa_ref/mypisa.cfg")
 
 
 def _have(path):
@@ -40,15 +48,18 @@ needs_pisa_bin = pytest.mark.skipif(
 # unique SESSION_PREFIX so each test's sessions are isolated and `-list`
 # resolves them from the same working dir. The SRS/MOLREF/PISTORE dirs must
 # point at the CCP4 share tree (they hold the chemical / surface data).
+# The CCP4 root is derived from PISA_BIN (<ccp4>/bin/pisa -> <ccp4>).
+CCP4_ROOT = os.path.dirname(os.path.dirname(PISA_BIN))
+
 _PISA_CFG_BODY = """\
 DATA_ROOT
 {cwd}
 SRS_DIR
-/programs/xtal/ccp4-9/share/ccp4srs/
+{ccp4}/share/ccp4srs/
 MOLREF_DIR
-/programs/xtal/ccp4-9/share/pisa/
+{ccp4}/share/pisa/
 PISTORE_DIR
-/programs/xtal/ccp4-9/share/pisa/
+{ccp4}/share/pisa/
 RASMOL_COM
 /dummy/rasmol
 JMOL_COM
@@ -64,7 +75,7 @@ def _write_pisa_config(cwd):
     """Write a self-contained PISA config into ``cwd`` and return its path."""
     cfg_path = os.path.join(cwd, "pisa_fp_test.cfg")
     with open(cfg_path, "w") as fh:
-        fh.write(_PISA_CFG_BODY.format(cwd=cwd))
+        fh.write(_PISA_CFG_BODY.format(cwd=cwd, ccp4=CCP4_ROOT))
     return cfg_path
 
 
@@ -78,7 +89,7 @@ def _pisa_env(cwd):
     env = dict(os.environ)
     env.pop("PISA_CONFIG", None)
     env["PISA_CONF_FILE"] = _write_pisa_config(cwd)
-    env["PATH"] = "/programs/xtal/ccp4-9/bin:" + env.get("PATH", "")
+    env["PATH"] = os.path.dirname(PISA_BIN) + ":" + env.get("PATH", "")
     return env
 
 
