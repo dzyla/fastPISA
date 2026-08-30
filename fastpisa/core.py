@@ -155,6 +155,18 @@ def run_core(
     sigma_all = np.array([
         get_asp(a.atom_name, a.element, a.res_name) for a in atoms])
 
+    # Per-molecule surface statistics (sigma + isolated ASA of exposed
+    # atoms), precomputed once for the P-value model.
+    surf_stats = []
+    for mi in range(n_molecules):
+        ids = np.array(mol_atom_ids[mi], dtype=int)
+        if ids.size == 0:
+            surf_stats.append((np.zeros(0), np.zeros(0)))
+            continue
+        a_iso = np.array([asa_alone.get((mi, gi), 0.0) for gi in ids])
+        exposed = a_iso > 0.0
+        surf_stats.append((sigma_all[ids[exposed]], a_iso[exposed]))
+
     # 7. Detect interfaces between all molecule pairs.
     #
     # PISA semantics: an interface exists between two molecules when placing
@@ -176,13 +188,28 @@ def run_core(
             if len(near1) == 0 or len(near2) == 0:
                 continue
 
-            # Pair ASA -> per-atom pair buried surface (isolated - in-pair)
-            pair_ids = mol1_ids + mol2_ids
+            # Pair ASA, computed only where it can differ from the isolated
+            # value: an atom's ASA changes on pairing only if a partner atom
+            # sits within the shadow cutoff (the ``near`` sets). The ASA of
+            # those atoms is evaluated over the changed atoms plus every
+            # pair atom that could occlude them (also within the shadow
+            # cutoff) -- identical result to a full-pair calculation, at a
+            # fraction of the cost on large complexes.
+            changed = near1 + near2
+            pair_member = np.zeros(n_atoms, dtype=bool)
+            pair_member[mol1_ids] = True
+            pair_member[mol2_ids] = True
+            subset = set(changed)
+            for ball in kd_tree.query_ball_point(all_coords[changed], shadow_cutoff):
+                for j in ball:
+                    if pair_member[j]:
+                        subset.add(j)
+            subset = sorted(subset)
             asa_12 = calculate_asa(
-                atoms=[atoms[i] for i in pair_ids], atom_indices=pair_ids,
+                atoms=[atoms[i] for i in subset], atom_indices=subset,
                 **asa_kwargs)
             bsa_pair: Dict[int, float] = {}
-            for mi, ids in ((mol1, mol1_ids), (mol2, mol2_ids)):
+            for mi, ids in ((mol1, near1), (mol2, near2)):
                 for gi in ids:
                     b = asa_alone.get((mi, gi), 0.0) - asa_12.get(gi, 0.0)
                     if b > 1e-6:
@@ -260,13 +287,8 @@ def run_core(
 
             # P-value: PISA's actual definition -- probability that a random
             # surface patch burying the same areas is at least as hydrophobic.
-            surf_sig, surf_area = [], []
-            for mi, ids in ((mol1, mol1_ids), (mol2, mol2_ids)):
-                for gi in ids:
-                    a_iso = asa_alone.get((mi, gi), 0.0)
-                    if a_iso > 0.0:
-                        surf_sig.append(sigma_all[gi])
-                        surf_area.append(a_iso)
+            surf_sig = np.concatenate([surf_stats[mol1][0], surf_stats[mol2][0]])
+            surf_area = np.concatenate([surf_stats[mol1][1], surf_stats[mol2][1]])
             p_value = calculate_p_value_pisa(
                 solv_energy, list(bsa_pair.values()), surf_sig, surf_area)
             css = calculate_css_pisa(solv_energy, interface_area)

@@ -454,32 +454,27 @@ def get_molecule_masks(atoms, molecules):
     masks include only the atoms of the matching ligand residue.
     """
     n = len(atoms)
+
+    # Per-atom attribute arrays built once, so each molecule's mask is a
+    # vectorised comparison instead of an O(n_molecules * n_atoms) Python loop.
+    chains = np.array([a.auth_asym_id for a in atoms])
+    seqs = np.array([a.auth_seq_id for a in atoms])
+    icodes = np.array([(a.icode or "").strip() for a in atoms])
+    comps = np.array([a.label_comp_id for a in atoms])
+    is_poly = np.array([
+        a.res_name.upper() in AMINO_ACIDS or a.res_name.upper() in NUCLEIC_ACIDS
+        for a in atoms
+    ]) if n else np.zeros(0, dtype=bool)
+
     masks = []
-
     for mol in molecules:
-        mask = np.zeros(n, dtype=bool)
-        mol_chain_type = mol.get("chain_type", "polymer")
-
-        if mol_chain_type == "ligand":
-            auth_chain = mol["auth_asym_id"]
-            auth_seq = mol["auth_seq_id"]
-            icode = mol.get("icode", "")
-            ccd = mol.get("ccd_id", None)
-            for i, atom in enumerate(atoms):
-                if (atom.auth_asym_id == auth_chain and
-                        atom.auth_seq_id == auth_seq and
-                        (atom.icode or "").strip() == icode and
-                        atom.label_comp_id == ccd):
-                    mask[i] = True
+        if mol.get("chain_type", "polymer") == "ligand":
+            mask = ((chains == mol["auth_asym_id"])
+                    & (seqs == mol["auth_seq_id"])
+                    & (icodes == mol.get("icode", ""))
+                    & (comps == mol.get("ccd_id", None)))
         else:
             # polymer: match chain ID AND a standard polymer residue
-            auth_chain = mol["auth_asym_id"]
-            for i, atom in enumerate(atoms):
-                if atom.auth_asym_id != auth_chain:
-                    continue
-                rn = atom.res_name.upper()
-                if rn in AMINO_ACIDS or rn in NUCLEIC_ACIDS:
-                    mask[i] = True
-
+            mask = (chains == mol["auth_asym_id"]) & is_poly
         masks.append(mask)
     return masks
