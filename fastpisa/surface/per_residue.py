@@ -122,7 +122,7 @@ def compute_per_residue_surface(
 
             # Solvation energy for this atom
             from fastpisa.energy.asp_table import get_asp
-            asp = get_asp(atom.atom_name, atom.element)
+            asp = get_asp(atom.atom_name, atom.element, atom.res_name)
             solv_list.append(round(asp * bsa, 4))
 
         result["residue_label_comp_ids"].append(res_name)

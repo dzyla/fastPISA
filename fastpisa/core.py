@@ -36,11 +36,10 @@ from fastpisa.interface.contacts import (
 )
 from fastpisa.interface.bonds import detect_bond_flags
 from fastpisa.energy.energy import (
-    calculate_solvation_energy, calculate_contact_energy,
-    calculate_entropy, calculate_stabilization_energy,
-    calculate_assembly_dissociation_energy,
+    calculate_solvation_energy, bond_energy,
+    calculate_entropy, calculate_assembly_dissociation_energy,
 )
-from fastpisa.scoring.scoring import calculate_p_value, calculate_css
+from fastpisa.scoring.scoring import calculate_p_value_pisa, calculate_css_pisa
 from fastpisa.surface.per_residue import (
     compute_per_residue_surface, compute_buried_surface,
 )
@@ -101,6 +100,14 @@ def run_core(
     n_molecules = len(molecules)
     logger.info("Found %d molecules", n_molecules)
 
+    # Surfaces, interfaces and contacts are computed over HEAVY atoms only --
+    # the PISA convention. Explicit hydrogens (when a model has them) stay in
+    # the parsed atom list so the H-bond detector can use their geometry, but
+    # they carry no surface area and are not contact partners.
+    heavy = np.array([a.element.strip().upper() not in ("H", "D")
+                      for a in atoms])
+    masks = [m & heavy for m in masks]
+
     # 3. KD-tree over all atoms (shared by every ASA call)
     all_coords = np.array([[a.x, a.y, a.z] for a in atoms])
     all_radii = np.array([get_vdw_radius(a.element) for a in atoms])
@@ -142,6 +149,11 @@ def run_core(
         mol_idx: sum(asa_alone.get((mol_idx, i), 0.0) for i in mol_atom_ids[mol_idx])
         for mol_idx in range(n_molecules)
     }
+
+    # Per-atom ASP sigma (for solvation & the P-value surface statistics)
+    from fastpisa.energy.asp_table import get_asp
+    sigma_all = np.array([
+        get_asp(a.atom_name, a.element, a.res_name) for a in atoms])
 
     # 7. Detect interfaces between all molecule pairs.
     #
@@ -203,6 +215,13 @@ def run_core(
                 (min(c.atom1_idx, c.atom2_idx), max(c.atom1_idx, c.atom2_idx))
                 for c, f in zip(contacts, bond_flags) if "hbond" in f
             }
+            # Bond counts are PISA-calibrated in EVERY mode: independent
+            # predicates over the atom contacts (PISA counts a charged
+            # H-bonded pair in both its h-bond and salt-bridge tables).
+            n_hbonds = sum(1 for f in bond_flags if "hbond" in f)
+            n_salt = sum(1 for f in bond_flags if "salt_bridge" in f)
+            n_ss = sum(1 for f in bond_flags if "disulfide" in f)
+            n_other = sum(1 for f in bond_flags if not f)
 
             # COCOMAPS residue contact map (same cutoff => same interfaces;
             # H-bond classification shares the geometric detector above)
@@ -230,22 +249,27 @@ def run_core(
             interface_atom_set = set(iface_ids1) | set(iface_ids2)
             solv_energy = calculate_solvation_energy(
                 interface_atom_set, bsa_pair, atoms)
-            stab_energy = calculate_stabilization_energy(solv_energy, contacts)
+            # PISA's stab_en = dG_solv + per-bond contributions (constants
+            # recovered exactly from the reference engine; see energy.py).
+            stab_energy = solv_energy + bond_energy(n_hbonds, n_salt, n_ss)
 
             n_res1 = len(set((atoms[i].auth_asym_id, atoms[i].res_seq, atoms[i].icode)
                              for i in iface_ids1))
             n_res2 = len(set((atoms[i].auth_asym_id, atoms[i].res_seq, atoms[i].icode)
                              for i in iface_ids2))
 
-            p_value = calculate_p_value(
-                solv_energy, interface_area,
-                assembly_asa if assembly_asa > 0 else 1.0,
-            )
-            css = calculate_css(
-                interface_area, solv_energy, p_value,
-                len(contacts), n_res1 + n_res2,
-                assembly_asa if assembly_asa > 0 else 1.0,
-            )
+            # P-value: PISA's actual definition -- probability that a random
+            # surface patch burying the same areas is at least as hydrophobic.
+            surf_sig, surf_area = [], []
+            for mi, ids in ((mol1, mol1_ids), (mol2, mol2_ids)):
+                for gi in ids:
+                    a_iso = asa_alone.get((mi, gi), 0.0)
+                    if a_iso > 0.0:
+                        surf_sig.append(sigma_all[gi])
+                        surf_area.append(a_iso)
+            p_value = calculate_p_value_pisa(
+                solv_energy, list(bsa_pair.values()), surf_sig, surf_area)
+            css = calculate_css_pisa(solv_energy, interface_area)
 
             iface = Interface(
                 interface_id=interface_id,
@@ -260,18 +284,11 @@ def run_core(
                 contacts=contacts,
             )
 
-            # Bond counts are PISA-calibrated in EVERY mode: independent
-            # predicates over the atom contacts (PISA counts a charged
-            # H-bonded pair in both its h-bond and salt-bridge tables).
-            # COCOMAPS-specific counts live in iface.cocomaps.
-            iface.number_hydrogen_bonds = sum(
-                1 for f in bond_flags if "hbond" in f)
-            iface.number_salt_bridges = sum(
-                1 for f in bond_flags if "salt_bridge" in f)
-            iface.number_disulfide_bonds = sum(
-                1 for f in bond_flags if "disulfide" in f)
+            iface.number_hydrogen_bonds = n_hbonds
+            iface.number_salt_bridges = n_salt
+            iface.number_disulfide_bonds = n_ss
             iface.number_covalent_bonds = 0
-            iface.number_other_bonds = sum(1 for f in bond_flags if not f)
+            iface.number_other_bonds = n_other
 
             if want_cocomaps:
                 from fastpisa.cocomaps.contact_map import aggregate_residue_pairs
@@ -301,6 +318,10 @@ def run_core(
             mol_info_2.update(compute_per_residue_surface(
                 atoms, asa_alone_2, bsa_pair, set(iface_ids2), mol2_ids))
             iface.molecules = [mol_info_1, mol_info_2]
+
+            # Private per-pair surface data (calibration / downstream tools)
+            iface._bsa_pair = bsa_pair
+            iface._iface_ids = (iface_ids1, iface_ids2)
 
             interfaces.append(iface)
 
@@ -342,7 +363,11 @@ def build_documents(
     total_solv_energy = sum(i.solvation_energy for i in interfaces)
 
     solv_energies = [i.solvation_energy for i in interfaces]
-    contact_energies = [calculate_contact_energy(i.contacts)[0] for i in interfaces]
+    contact_energies = [
+        bond_energy(i.number_hydrogen_bonds, i.number_salt_bridges,
+                    i.number_disulfide_bonds)
+        for i in interfaces
+    ]
     entropies = [
         calculate_entropy(
             i.interface_area,

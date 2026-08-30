@@ -29,6 +29,10 @@ AMINO_ACIDS = frozenset({
     "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY",
     "HIS", "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER",
     "THR", "TRP", "TYR", "VAL", "MSE", "SEC", "PYL",
+    # common modified residues that are part of the polymer chain (splitting
+    # them out as ligands fabricates interfaces PISA does not report)
+    "CCS", "CSO", "CSD", "CME", "OCS", "KCX", "LLP", "MLY", "M3L",
+    "PTR", "SEP", "TPO", "HYP", "PCA", "CGU", "CSX", "SMC", "NEP",
 })
 
 # Canonical DNA/RNA plus their common modified forms (PDB CCD codes). Canonical
