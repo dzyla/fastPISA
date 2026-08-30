@@ -1,9 +1,8 @@
 """Regression tests for three defects found by calibrating against CCP4 PISA v2.2.0.
 
-Ground truth for the calibration was the original binary at
-/programs/xtal/ccp4-9/bin/pisa run as `-analyse` then `-list interfaces`, over 7
-antibody-antigen reference structures from the CASP17 immune-complex category
-(63 interfaces matched to fastPISA's own by chain pair).
+Ground truth for the calibration was an original CCP4 PISA binary run as
+`-analyse` then `-list interfaces`, over 7 antibody-antigen reference
+structures (63 interfaces matched to fastPISA's own by chain pair).
 
 What that calibration showed, and what these tests pin:
 
@@ -23,7 +22,7 @@ import numpy as np
 import pytest
 
 from fastpisa.scoring.scoring import calculate_p_value
-from fastpisa.energy.asp_table import ASP_TABLE, get_asp
+from fastpisa.energy.asp_table import SIGMA, get_asp
 
 
 class TestOutputPackageImportable:
@@ -64,7 +63,7 @@ class TestPValueIsNotDegenerate:
     """The P-value must vary with interface chemistry, not clamp for everything."""
 
     def test_p_value_varies_across_realistic_interfaces(self):
-        # Interfaces spanning the range seen in the CASP17 references (24 - 3700 A^2),
+        # Interfaces spanning the range seen in the references (24 - 3700 A^2),
         # each with a plausible solvation energy for its size.
         cases = [(-2.9, 24.0), (-29.5, 316.0), (-22.7, 468.0),
                  (-19.2, 736.0), (-176.6, 3692.0)]
@@ -99,39 +98,41 @@ class TestPValueIsNotDegenerate:
                 assert 0.0 <= p <= 1.0
 
 
-class TestAspSignConvention:
-    """asp_table.py and energy.py must agree on what a negative energy means."""
+class TestAspCalibratedConvention:
+    """The PISA-calibrated sigma table: dG_solv = sum sigma*BSA, negative =
+    favourable, exactly like PISA's int_solv_en."""
 
-    def test_polar_atoms_are_negative_and_carbon_positive(self):
-        # calculate_solvation_energy sums asp*bsa and calls the result
-        # "negative = favourable", so favourably-buried polar atoms must be negative.
-        assert ASP_TABLE["N"] < 0
-        assert ASP_TABLE["O"] < 0
-        assert ASP_TABLE["C"] > 0
+    def test_hydrophobic_burial_favourable_charged_burial_costly(self):
+        assert SIGMA["C"] < 0, "carbon burial must be favourable"
+        assert SIGMA["S"] < 0, "sulfur burial must be favourable"
+        assert SIGMA["N+"] > 0, "burying charged N must cost energy"
+        assert SIGMA["O-"] > 0, "burying carboxylate O must cost energy"
 
-    def test_burying_a_polar_patch_gives_negative_energy(self):
+    def test_burying_a_hydrophobic_patch_gives_negative_energy(self):
         from fastpisa.energy.energy import calculate_solvation_energy
 
         class _Atom:
-            def __init__(self, name, element):
+            def __init__(self, name, element, res="LEU"):
                 self.atom_name = name
                 self.element = element
+                self.res_name = res
 
-        atoms = [_Atom("OD1", "O"), _Atom("ND2", "N")]
+        atoms = [_Atom("CD1", "C"), _Atom("CD2", "C")]
         bsa = {0: 40.0, 1: 30.0}
         e = calculate_solvation_energy({0, 1}, bsa, atoms)
         assert e < 0, (
-            "burying polar atoms must yield a negative (favourable) solvation energy "
-            "under the convention stated in energy.py")
+            "burying hydrophobic carbons must yield a negative (favourable) "
+            "solvation energy, matching PISA's int_solv_en sign")
 
-    def test_get_asp_falls_back_to_the_element_table(self):
-        # get_asp resolves by ATOM NAME first and uses `element` only as a fallback, so
-        # the element path must be exercised with a name that is absent from
-        # ASP_BY_NAME -- passing a real name like "CA" returns carbon whatever element
-        # is supplied, which is correct behaviour and not what this test is about.
-        for element in ("C", "N", "O", "S"):
-            assert get_asp("ZZ9", element) == pytest.approx(ASP_TABLE[element])
+    def test_element_fallback_for_unknown_atom_names(self):
+        for element in ("C", "S"):
+            assert get_asp("ZZ9", element) == pytest.approx(SIGMA[element])
 
-    def test_named_atoms_take_precedence_over_the_element_fallback(self):
-        # Pinning the documented order, so a future refactor cannot silently invert it.
-        assert get_asp("CA", "O") == pytest.approx(get_asp("CA", "N"))
+    def test_charged_class_requires_the_residue(self):
+        # Lys NZ is charged; the same atom name without residue context is
+        # neutral N.
+        assert get_asp("NZ", "N", "LYS") == pytest.approx(SIGMA["N+"])
+        assert get_asp("NZ", "N") == pytest.approx(SIGMA["N"])
+
+    def test_hydrogens_carry_no_solvation(self):
+        assert get_asp("H", "H") == 0.0

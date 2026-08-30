@@ -1,0 +1,58 @@
+,Res. Name 1,Res. Number 1,Chain 1,Res. Name 2,Res. Number 2,Chain 2,Type of Interactions
+9,ARG,103,A,DG,7,B,Proximal contact
+17,ARG,103,A,DG,8,B,; Salt-bridge; Polar vdW contact; Polar vdW contact; Polar vdW contact
+75,ARG,114,A,DG,7,B,; Salt-bridge; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact
+109,ARG,114,A,DG,8,B,; Salt-bridge
+171,ARG,115,A,DG,8,B,Proximal contact
+183,PHE,116,A,DG,8,B,; CH-O/N bond
+202,PHE,116,A,DG,7,B,Proximal contact
+249,SER,117,A,DC,9,B,Proximal contact
+308,ARG,118,A,DT,11,B,; Polar vdW contact; Polar vdW contact
+319,ARG,118,A,DC,9,B,; Polar vdW contact
+329,ARG,118,A,DG,10,B,; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact
+466,ASP,120,A,DC,9,B,Proximal contact
+471,ASP,120,A,DG,10,B,Proximal contact
+510,GLU,121,A,DG,8,B,; CH-O/N bond; Polar vdW contact
+522,GLU,121,A,DC,9,B,; CH-O/N bond
+607,ARG,124,A,DC,9,B,; Polar vdW contact; Polar vdW contact
+614,ARG,124,A,DG,7,B,; Polar vdW contact; Polar vdW contact; Polar vdW contact
+623,ARG,124,A,DG,8,B,; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact
+755,HIS,125,A,DG,6,B,Proximal contact
+759,HIS,125,A,DG,7,B,; CH-O/N bond; Polar vdW contact; Polar vdW contact
+802,ILE,128,A,DG,6,B,; CH-O/N bond; Polar vdW contact; Polar vdW contact
+809,ILE,128,A,DG,7,B,Proximal contact
+880,LYS,133,A,DT,5,B,; Salt-bridge
+960,ARG,142,A,DG,4,B,; Polar vdW contact
+966,ARG,142,A,DT,5,B,; Salt-bridge
+1030,ASN,143,A,DT,5,B,Proximal contact
+1048,PHE,144,A,DT,5,B,Proximal contact
+1054,PHE,144,A,DG,4,B,Proximal contact
+1113,SER,145,A,DT,5,B,Proximal contact
+1121,SER,145,A,DG,6,B,Clash
+1179,ARG,146,A,DG,6,B,; Polar vdW contact; Polar vdW contact; Polar vdW contact
+1203,ARG,146,A,DG,7,B,; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact
+1206,ARG,146,A,DG,8,B,Proximal contact
+1297,ASP,148,A,DG,7,B,Proximal contact
+1304,HIS,149,A,DG,4,B,Proximal contact
+1337,HIS,149,A,DT,5,B,; π-π interaction
+1391,HIS,149,A,DG,7,B,Proximal contact
+1412,HIS,149,A,DG,6,B,; CH-O/N bond; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact
+1508,THR,152,A,DG,4,B,Proximal contact
+1515,THR,152,A,DT,5,B,Proximal contact
+1553,HIS,153,A,DG,4,B,; CH-O/N bond; Polar vdW contact; Polar vdW contact; Polar vdW contact
+1599,THR,156,A,DC,3,B,; CH-O/N bond; CH-O/N bond; CH-O/N bond; Polar vdW contact; Polar vdW contact
+1625,THR,156,A,DG,4,B,Proximal contact
+1724,ARG,170,A,DA,1,B,Proximal contact
+1730,ARG,170,A,DG,2,B,; Salt-bridge
+1773,PHE,172,A,DG,2,B,Proximal contact
+1786,ALA,173,A,DC,3,B,Proximal contact
+1868,ARG,174,A,DT,5,B,Proximal contact
+1881,ARG,174,A,DC,3,B,; Polar vdW contact; Polar vdW contact
+1891,ARG,174,A,DG,4,B,; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact
+2051,ASP,176,A,DC,3,B,Proximal contact
+2056,ASP,176,A,DG,4,B,Proximal contact
+2067,GLU,177,A,DC,3,B,Proximal contact
+2093,GLU,177,A,DG,2,B,Proximal contact
+2190,ARG,180,A,DA,1,B,; Cation-π interaction; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact
+2202,ARG,180,A,DC,3,B,Proximal contact
+2222,ARG,180,A,DG,2,B,; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact

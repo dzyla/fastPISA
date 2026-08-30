@@ -33,7 +33,7 @@ def _analyze_one(args):
         }
 
 
-def analyze_many(paths: Iterable[PathLike], mode: str = "pisa",
+def analyze_many(paths: Iterable[PathLike], mode: str = "combined",
                  n_jobs: int = 1, **kwargs) -> List[Dict[str, Any]]:
     """Analyze multiple structures and return one result dict per input.
 

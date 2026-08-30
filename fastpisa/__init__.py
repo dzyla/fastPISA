@@ -1,9 +1,11 @@
 """fastPISA: Local reproduction of PISA with COCOMAPS mode.
 
-Reads a PDB/mmCIF file and identifies biomolecular interfaces using two
-complementary approaches that share the same interface-detection and
-surface machinery (so they find identical interfaces):
+Reads a PDB/mmCIF file and identifies biomolecular interfaces. All modes run
+one shared analysis core (:mod:`fastpisa.core`) so they find identical
+interfaces by construction:
 
+  - combined mode:  (default) one unified report per interface — PISA
+                    thermodynamics AND the COCOMAPS contact map.
   - PISA mode:      thermodynamic/surface analysis, output in the PDBe PISA
                     JSON schema ('assembly' + 'interfaces' documents).
   - COCOMAPS mode:  COCOMAPS 2.0 residue-residue contact-map analysis with
@@ -13,11 +15,11 @@ surface machinery (so they find identical interfaces):
                     'interface_contact_map' field per interface.
 
 Use:
-  from fastpisa import pipeline, cocomaps
-  results = pipeline.analyze_structure(...)
-  results = cocomaps.analyze_structure_cocomaps(...)
+  from fastpisa.api import PISAInterfaceAnalyzer
+  ana = PISAInterfaceAnalyzer("in.pdb", pdb_id="X")   # combined mode
+  ana.analyze(); ana.interfaces; ana.write_json("out/")
 
-CLI: python -m fastpisa.cli <pdb_file> --mode {pisa,cocomaps}
+CLI: python -m fastpisa.cli <pdb_file> --mode {combined,pisa,cocomaps}
 """
 
-__version__ = "1.0.0"
+__version__ = "0.3.0"

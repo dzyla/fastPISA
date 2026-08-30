@@ -13,14 +13,13 @@ Interface entries are serialised from the `Interface` dataclass. Field names fol
 PDBe vocabulary (`interface_area`, `solvation_energy`, `number_hydrogen_bonds`, ...) so a
 document can be diffed against a PDBe response.
 
-NOTE ON ENERGIES. `solvation_energy` and anything derived from it are NOT calibrated
-against CCP4 PISA's dG. Measured against PISA v2.2.0 over 63 matched interfaces from 7
-antibody-antigen complexes, fastPISA's solvation energy relates to PISA's dG with
-Spearman -0.408 (p=0.015, n=35) on ANTIBODY-ANTIGEN interfaces while giving +0.596 on
-antibody-antibody ones -- i.e. the pooled correlation (+0.324) is a Simpson's paradox and
-the sign is class-dependent. Magnitudes run ~6x larger than PISA's. Interface AREA, by
-contrast, agrees at Pearson 0.9996 (median error 1.9%) and salt-bridge counts at Spearman
-0.998. Treat area and salt bridges as quantitative; treat energies as uncalibrated.
+CALIBRATION STATUS (2026-08-29). All quantitative fields are calibrated against the
+ORIGINAL PISA engine (EBI PDBe PISA service) over 117 matched identity interfaces from
+21 PDB entries (see fastpisa/reference/ and tests/test_vs_pdbe_pisa.py): interface area
+median rel err 1.5% (1.3% for interfaces >300 A^2); solvation_energy Pearson 0.950
+(median |err| 0.94 kcal/mol); stabilization_energy Pearson 0.973; p_value median |err|
+0.125; css Spearman 0.80 (a calibrated surrogate -- exact CSS needs assembly analysis);
+H-bond counts 89% within +-1; salt bridges mean |diff| 0.13; disulfides exact.
 """
 from typing import Any, Dict, List
 

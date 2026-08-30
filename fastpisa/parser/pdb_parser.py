@@ -154,7 +154,13 @@ def parse_pdb(path: str) -> PDBStructure:
     structure = PDBStructure()
     chains_by_id: dict = {}
 
-    with open(path, "r") as f:
+    if str(path).endswith(".gz"):
+        import gzip
+        _open = lambda p: gzip.open(p, "rt")  # noqa: E731
+    else:
+        _open = lambda p: open(p, "r")  # noqa: E731
+
+    with _open(path) as f:
         for line in f:
             rec = line[:6].strip()
             if rec not in ("ATOM", "HETATM"):

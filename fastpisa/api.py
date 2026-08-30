@@ -29,8 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastpisa.interface.contacts import Interface
-from fastpisa.pipeline import analyze_structure
-from fastpisa.cocomaps.pipeline import analyze_structure_cocomaps
+from fastpisa.core import analyze as _core_analyze, MODES
 
 
 class PISAInterfaceAnalyzer:
@@ -51,13 +50,20 @@ class PISAInterfaceAnalyzer:
     interface_cutoff : float
         Distance cutoff for interface-atom detection (default 5.0 A).
     mode : str
-        Analysis mode: ``"pisa"`` (default) or ``"cocomaps"``.
+        Analysis mode: ``"combined"`` (default; PISA energetics AND the
+        COCOMAPS contact map on every interface), ``"pisa"``, or
+        ``"cocomaps"``. All modes find identical interfaces (single shared
+        core).
     exclude_water : bool
         Exclude ordered water (HOH etc.) from the interface search
         (default True).
     min_css : float
         Minimum CSS score for an interface to be kept (significance filter).
         ``0.0`` (default) keeps every detected interface.
+    ligand_mode : str
+        ``"separate"`` (default; classic PISA -- each bound hetero group is
+        its own monomer) or ``"merge"`` (a chain's bound ligands/cofactors
+        belong to that chain's molecule, the jsPISA-on-assembly convention).
 
     Attributes
     ----------
@@ -78,9 +84,10 @@ class PISAInterfaceAnalyzer:
         probe_radius: float = 1.4,
         point_density: int = 480,
         interface_cutoff: float = 5.0,
-        mode: str = "pisa",
+        mode: str = "combined",
         exclude_water: bool = True,
         min_css: float = 0.0,
+        ligand_mode: str = "separate",
     ):
         self.path = Path(path)
         if not self.path.exists():
@@ -93,6 +100,7 @@ class PISAInterfaceAnalyzer:
         self.mode = mode
         self.exclude_water = exclude_water
         self.min_css = min_css
+        self.ligand_mode = ligand_mode
 
         # Populated by analyze()
         self.interfaces: List[Interface] = []
@@ -130,13 +138,12 @@ class PISAInterfaceAnalyzer:
             interface_cutoff=self.interface_cutoff,
             exclude_water=self.exclude_water,
             min_css=self.min_css,
+            ligand_mode=self.ligand_mode,
         )
-        if self.mode == "cocomaps":
-            result = analyze_structure_cocomaps(**kwargs)
-        elif self.mode == "pisa":
-            result = analyze_structure(**kwargs)
-        else:
-            raise ValueError(f"Unknown mode: {self.mode!r} (expected 'pisa' or 'cocomaps')")
+        if self.mode not in MODES:
+            raise ValueError(
+                f"Unknown mode: {self.mode!r} (expected one of {MODES})")
+        result = _core_analyze(mode=self.mode, **kwargs)
 
         self.result = result
         self.interfaces = result.get("interfaces_obj", [])
@@ -396,7 +403,7 @@ class PISAInterfaceAnalyzer:
 
         AlphaFold / ColabFold / Protenix store pLDDT (0-100) in B-factors, so
         this works for any predictor with no extra JSON -- unlike ``load_pae``,
-        whose ``*_predicted_aligned_error.json`` is Protenix/OpenDDE-specific.
+        whose ``*_predicted_aligned_error.json`` only some pipelines emit.
         Raises ValueError if the model carries no meaningful B-factors.
         """
         from fastpisa.pae import build_plddt_map
@@ -451,6 +458,41 @@ class PISAInterfaceAnalyzer:
         self.interfaces = kept
         return kept
 
+    def weight_energies_by_confidence(self, pae_threshold: float = 10.0, plddt_threshold: float = 50.0) -> None:
+        """Weight physical interaction energies and CSS based on prediction confidence.
+
+        For low-confidence interfaces (high PAE or low pLDDT), stabilization and
+        solvation energies, as well as the CSS score, are scaled down. This avoids
+        overestimating the stability of domains that are not confidently predicted.
+        """
+        from fastpisa.pae import interface_pae_score, interface_plddt
+        self.analyze()
+        atoms = self._parsed_atoms()
+
+        for i in self.interfaces:
+            weight = 1.0
+
+            # Prioritize PAE if available (lower is better, typically 0-30 A)
+            if self.pae_data is not None and self.pae_data.has_pae:
+                pae = interface_pae_score(i, atoms, self._pae_map, self.pae_data)
+                if pae is not None:
+                    # e.g., if pae is > threshold, weight drops linearly to 0.1 at threshold*2
+                    if pae > pae_threshold:
+                        weight = max(0.1, 1.0 - ((pae - pae_threshold) / pae_threshold))
+            
+            # Fallback to pLDDT if available (higher is better, typically 0-100)
+            elif self._plddt_map:
+                plddt = interface_plddt(i, atoms, self._plddt_map)
+                if plddt is not None:
+                    # e.g., if plddt < threshold, weight drops linearly
+                    if plddt < plddt_threshold:
+                        weight = max(0.1, plddt / plddt_threshold)
+
+            if weight < 1.0:
+                i.stabilization_energy = round(i.stabilization_energy * weight, 2)
+                i.solvation_energy = round(i.solvation_energy * weight, 2)
+                i.css = round(i.css * weight, 3)
+
     # -- visualisation helpers --------------------------------------------
     def write_pymol_script(self, out_path: str, by: str = "bsa") -> str:
         """Write a PyMOL ``.pml`` colouring the first interface's residues by
@@ -485,7 +527,7 @@ class PISAInterfaceAnalyzer:
 def analyze_interface(
     path: str,
     pdb_id: str = "unknown",
-    mode: str = "pisa",
+    mode: str = "combined",
     **kwargs,
 ) -> Dict[str, Any]:
     """One-shot function: analyze a structure and return the raw result.

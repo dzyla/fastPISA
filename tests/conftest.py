@@ -10,27 +10,33 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(REPO_ROOT, "tests", "data")
 KTZ = os.path.join(DATA_DIR, "1ktz.pdb")
 
-# Optional external structure used for integration / reproducibility tests.
-OPENDDE_AB = "/home/dzyla/dzyla-lab_home/Code/OpenDDE/outputs/antibody_complexes/results/MeV3920_F4-B05/MeV3920_F4-B05/seed_101/predictions/MeV3920_F4-B05_sample_0.cif"
-CASP17_DIR = "/home/dzyla/dzyla-lab_home/Code/OpenDDE/outputs/casp17_antibodies/results"
-
-# Optional original CCP4 PISA binary + config (for reproducibility tests).
-PISA_BIN = "/programs/xtal/ccp4-9/bin/pisa"
-PISA_CFG = "/tmp/pisa_ref/mypisa.cfg"
+# Optional external resources for integration / reproducibility tests,
+# supplied via environment variables (unset = the tests skip):
+#   FASTPISA_EXTERNAL_CIF        an AlphaFold/cryo-EM multi-chain complex CIF
+#                                (H-free model, used by H-free-chemistry tests)
+#   FASTPISA_EXTERNAL_MODELS_GLOB glob of predicted-model CIFs without crystal
+#                                data (used by the binary reproducibility test)
+#   FASTPISA_PISA_BIN            path to an original CCP4 `pisa` binary
+EXTERNAL_CIF = os.environ.get("FASTPISA_EXTERNAL_CIF", "")
+EXTERNAL_MODELS_GLOB = os.environ.get("FASTPISA_EXTERNAL_MODELS_GLOB", "")
+PISA_BIN = os.environ.get("FASTPISA_PISA_BIN", "")
 
 
 def _have(path):
-    return path is not None and os.path.exists(path)
+    return bool(path) and os.path.exists(path)
 
 
-needs_opendde = pytest.mark.skipif(
-    not _have(OPENDDE_AB), reason="OpenDDE antibody-complex CIF not available"
+needs_external_cif = pytest.mark.skipif(
+    not _have(EXTERNAL_CIF),
+    reason="no external complex CIF (set FASTPISA_EXTERNAL_CIF)"
 )
-needs_casp17 = pytest.mark.skipif(
-    not _have(CASP17_DIR), reason="CASP17 antibodies results dir not available"
+needs_external_models = pytest.mark.skipif(
+    not EXTERNAL_MODELS_GLOB,
+    reason="no external model set (set FASTPISA_EXTERNAL_MODELS_GLOB)"
 )
 needs_pisa_bin = pytest.mark.skipif(
-    not _have(PISA_BIN), reason="original CCP4 PISA binary not available"
+    not _have(PISA_BIN),
+    reason="original CCP4 PISA binary not available (set FASTPISA_PISA_BIN)"
 )
 
 
@@ -40,15 +46,18 @@ needs_pisa_bin = pytest.mark.skipif(
 # unique SESSION_PREFIX so each test's sessions are isolated and `-list`
 # resolves them from the same working dir. The SRS/MOLREF/PISTORE dirs must
 # point at the CCP4 share tree (they hold the chemical / surface data).
+# The CCP4 root is derived from PISA_BIN (<ccp4>/bin/pisa -> <ccp4>).
+CCP4_ROOT = os.path.dirname(os.path.dirname(PISA_BIN))
+
 _PISA_CFG_BODY = """\
 DATA_ROOT
 {cwd}
 SRS_DIR
-/programs/xtal/ccp4-9/share/ccp4srs/
+{ccp4}/share/ccp4srs/
 MOLREF_DIR
-/programs/xtal/ccp4-9/share/pisa/
+{ccp4}/share/pisa/
 PISTORE_DIR
-/programs/xtal/ccp4-9/share/pisa/
+{ccp4}/share/pisa/
 RASMOL_COM
 /dummy/rasmol
 JMOL_COM
@@ -64,7 +73,7 @@ def _write_pisa_config(cwd):
     """Write a self-contained PISA config into ``cwd`` and return its path."""
     cfg_path = os.path.join(cwd, "pisa_fp_test.cfg")
     with open(cfg_path, "w") as fh:
-        fh.write(_PISA_CFG_BODY.format(cwd=cwd))
+        fh.write(_PISA_CFG_BODY.format(cwd=cwd, ccp4=CCP4_ROOT))
     return cfg_path
 
 
@@ -78,7 +87,7 @@ def _pisa_env(cwd):
     env = dict(os.environ)
     env.pop("PISA_CONFIG", None)
     env["PISA_CONF_FILE"] = _write_pisa_config(cwd)
-    env["PATH"] = "/programs/xtal/ccp4-9/bin:" + env.get("PATH", "")
+    env["PATH"] = os.path.dirname(PISA_BIN) + ":" + env.get("PATH", "")
     return env
 
 
@@ -90,7 +99,7 @@ def run_pisa_binary_analyse(cif_pdb, session_name, cwd):
     with a unique SESSION_PREFIX, so the session lands in ``cwd`` and the
     subsequent ``-list`` resolves it from the same place.
 
-    For structures without crystal data (CASP17 AlphaFold models) this yields
+    For structures without crystal data (predicted models) this yields
     exactly the ASU interfaces -- the cleanest apples-to-apples comparison
     with fastPISA.
     """

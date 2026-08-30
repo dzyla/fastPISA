@@ -17,12 +17,13 @@ criteria described in the COCOMAPS 2.0 paper and the literature it cites):
   pi_pi              - aromatic ring ... aromatic ring
   cation_pi          - + charged ... pi ring
   ch_pi              - C-H(apolar sp3) ... pi ring
-  polar_vdw          - polar-polar contact (unclassified), distance < 5.0 A
-  apolar_vdw         - apolar-apolar / apolar-polar contact
-  clash              - interatomic distance < sum of vdW radii
+  polar_vdw          - polar vdW contact, distance <= r1 + r2 + 0.5 A
+  apolar_vdw         - apolar vdW contact, distance <= r1 + r2 + 0.5 A
+  clash              - interatomic distance < sum of vdW radii (no other class)
   water_mediated     - contact bridged by a crystallographic water
   metal_mediated     - salt/coordination contact involving a metal ion
-  distal             - within 5 A cutoff but no specific class
+  proximal           - within the 5 A cutoff but beyond vdW contact range
+                       (COCOMAPS 2.0 "Proximal contact")
 
 Each interface residue pair gets a dominant interaction type.
 """
@@ -47,6 +48,51 @@ CHARGED_ATOMS: Dict[Tuple[str, str], int] = {
     ("ASP", "OD1"): -1, ("ASP", "OD2"): -1,
     ("GLU", "OE1"): -1, ("GLU", "OE2"): -1,
 }
+
+# COCOMAPS 2.0 salt-bridge convention (differs from PISA's, which fastPISA
+# uses for the PISA-schema number_salt_bridges counts): cationic Lys NZ /
+# Arg NH1/NH2 vs Asp/Glu carboxylate O, or vs nucleic-acid phosphate OP1/OP2,
+# within 4.5 A.
+COCOMAPS_SALT_CATIONS = {("LYS", "NZ"), ("ARG", "NH1"), ("ARG", "NH2")}
+COCOMAPS_SALT_ANIONS = {("ASP", "OD1"), ("ASP", "OD2"),
+                        ("GLU", "OE1"), ("GLU", "OE2")}
+_NA_RES = {"A", "U", "G", "C", "T", "DA", "DG", "DC", "DT", "DU", "PSU"}
+COCOMAPS_SALT_DIST = 4.5
+
+# Carbons that carry NO hydrogen (carbonyl / carboxyl / guanidinium /
+# aromatic junction carbons): they cannot donate a weak C-H...O/N bond.
+_NO_H_CARBONS = {
+    ("*", "C"),
+    ("ASP", "CG"), ("GLU", "CD"), ("ASN", "CG"), ("GLN", "CD"),
+    ("ARG", "CZ"), ("TYR", "CG"), ("TYR", "CZ"), ("PHE", "CG"),
+    ("TRP", "CG"), ("TRP", "CD2"), ("TRP", "CE2"), ("HIS", "CG"),
+}
+_NA_NO_H_CARBONS = {
+    "A": {"C4", "C5", "C6"}, "G": {"C2", "C4", "C5", "C6"},
+    "C": {"C2", "C4"}, "T": {"C2", "C4", "C5"}, "U": {"C2", "C4"},
+}
+WEAK_HBOND_DIST = 3.6  # COCOMAPS 2.0 CH_ON_DIST
+
+
+def _carbon_bears_h(res: str, name: str) -> bool:
+    if ("*", name) in _NO_H_CARBONS or (res, name) in _NO_H_CARBONS:
+        return False
+    base = res[1:] if len(res) == 2 and res[0] in ("D", "R") else res
+    if base in _NA_NO_H_CARBONS and name in _NA_NO_H_CARBONS[base]:
+        return False
+    return True
+
+
+def _cocomaps_salt_bridge(res1: str, a1: str, res2: str, a2: str) -> bool:
+    for (rc, ac), (ra, aa) in (((res1, a1), (res2, a2)),
+                               ((res2, a2), (res1, a1))):
+        if (rc, ac) in COCOMAPS_SALT_CATIONS:
+            if (ra, aa) in COCOMAPS_SALT_ANIONS:
+                return True
+            if ra in _NA_RES and aa in ("OP1", "OP2", "O1P", "O2P"):
+                return True
+    return False
+
 
 # Aromatic (pi) side-chain atoms for pi interactions
 AROMATIC_RESIDUES = {"PHE", "TYR", "TRP", "HIS"}
@@ -128,8 +174,13 @@ def is_metal(element: str) -> bool:
 INTERACTION_TYPES = [
     "hydrogen_bond", "weak_hbond", "salt_bridge", "disulfide",
     "halogen_bond", "pi_pi", "cation_pi", "ch_pi", "polar_vdw",
-    "apolar_vdw", "water_mediated", "metal_mediated", "clash", "distal",
+    "apolar_vdw", "water_mediated", "metal_mediated", "clash", "proximal",
 ]
+
+# vdW-contact tolerance (A): COCOMAPS 2.0 counts a polar/apolar vdW contact
+# only within r1 + r2 + tolerance; anything farther (but inside the 5 A
+# cutoff) is a "proximal" contact.
+VDW_CONTACT_TOLERANCE = 0.5
 
 PROMISCUOUS_AA_SET = {nuc for nuc in NUCLEOBASE_AROMATIC}
 
@@ -144,10 +195,24 @@ def classify_atom_pair(
     dist: float,
     vdw_radius1: float,
     vdw_radius2: float,
+    is_hbond: Optional[bool] = None,
+    pi_verdicts: Optional[tuple] = None,
 ) -> str:
     """Classify the interaction type for a single atom-atom contact.
 
     Returns one of INTERACTION_TYPES.
+
+    ``is_hbond``: pre-computed geometric H-bond verdict for this pair (from
+    :mod:`fastpisa.interface.bonds`). When provided it replaces the
+    table-only ``_hbond`` rule so all fastPISA outputs share one H-bond
+    definition; ``None`` falls back to the legacy rule.
+
+    ``pi_verdicts``: pre-computed ring-geometry verdicts
+    ``(pi_pi_ok, cation_pi_ok, ch_pi_ok)`` from
+    :class:`fastpisa.cocomaps.rings.RingContext`. When provided, pi classes
+    require the geometric verdict (centroid distance and position above the
+    ring plane) in addition to the chemical atom-type rules; ``None`` falls
+    back to legacy proximity-only rules.
     """
     res1_u = res1.strip().upper()
     res2_u = res2.strip().upper()
@@ -161,12 +226,12 @@ def classify_atom_pair(
             and res2_u == "CYS" and dist < 3.0):
         return "disulfide"
 
-    # 2. Salt bridge (charged N ... charged O), < 4.0 A
-    if dist < 4.0:
-        c1 = CHARGED_ATOMS.get((res1_u, a1))
-        c2 = CHARGED_ATOMS.get((res2_u, a2))
-        if c1 is not None and c2 is not None and c1 * c2 < 0:
-            return "salt_bridge"
+    # 2. Salt bridge, COCOMAPS 2.0 convention: Lys NZ / Arg NH* vs Asp/Glu
+    #    carboxylate O or nucleic-acid phosphate OP1/OP2, <= 4.5 A. (The
+    #    PISA-schema number_salt_bridges counts use PISA's own convention
+    #    from fastpisa.interface.bonds instead.)
+    if dist <= COCOMAPS_SALT_DIST and _cocomaps_salt_bridge(res1_u, a1, res2_u, a2):
+        return "salt_bridge"
 
     # 3. Halogen bond: halogen ... O/N, < 3.6 A
     if dist < 3.6:
@@ -181,53 +246,62 @@ def classify_atom_pair(
         return "metal_mediated"
 
     # 5. Hydrogen bond / weak H-bond (before clash: H-bonds are short-range).
-    #    The strong H-bond uses the SAME HBOND_DISTANCE (3.5 A) as the PISA-mode
-    #    classifier so both modes report identical H-bond counts (single source
-    #    of truth for atom chemistry). Weak C-H...O/N keeps its own 3.8 A band.
-    if dist < HBOND_DISTANCE and _hbond(res1_u, a1, res2_u, a2, el1_u, el2_u):
+    #    When the caller supplies the geometric verdict (fastpisa.interface.
+    #    bonds; distance + antecedent angles), use it -- single source of
+    #    truth with the PISA-calibrated counts. Weak C-H...O/N keeps its own
+    #    3.8 A band.
+    if is_hbond if is_hbond is not None else (
+            dist < HBOND_DISTANCE and _hbond(res1_u, a1, res2_u, a2, el1_u, el2_u)):
         return "hydrogen_bond"
-    if dist < 3.8:
-        # weak C-H ... O/N
-        if (el1_u == "C" and el2_u in ("O", "N")) or (
-            el2_u == "C" and el1_u in ("O", "N")
-        ):
+    if dist <= WEAK_HBOND_DIST:
+        # weak C-H ... O/N: the carbon must actually carry a hydrogen
+        if (el1_u == "C" and el2_u in ("O", "N")
+                and _carbon_bears_h(res1_u, a1)) or (
+                el2_u == "C" and el1_u in ("O", "N")
+                and _carbon_bears_h(res2_u, a2)):
             return "weak_hbond"
-
-    # 6. Clash: below sum of vdW radii (only when no specific interaction matched)
-    if dist < (vdw_radius1 + vdw_radius2) - 0.05:
-        return "clash"
 
     # 7. Pi-pi / cation-pi / ch-pi (ring-ring or ring-charge/alkyl)
     ring1 = _is_ring_atom(res1_u, a1, el1_u)
     ring2 = _is_ring_atom(res2_u, a2, el2_u)
-    if ring1 and ring2 and dist < 5.5:
+    if pi_verdicts is not None:
+        pi_pi_ok, cation_pi_ok, ch_pi_ok = pi_verdicts
+    else:
+        pi_pi_ok, cation_pi_ok, ch_pi_ok = dist < 5.5, dist < 6.0, dist < 5.0
+    if ring1 and ring2 and pi_pi_ok:
         return "pi_pi"
     if ring1 or ring2:
         # cation-pi: + charged atom vs ring
-        if ring1:
+        if ring1 and cation_pi_ok:
             c2 = CHARGED_ATOMS.get((res2_u, a2))
-            if c2 == 1 and dist < 6.0:
+            if c2 == 1:
                 return "cation_pi"
-        if ring2:
+        if ring2 and cation_pi_ok:
             c1 = CHARGED_ATOMS.get((res1_u, a1))
-            if c1 == 1 and dist < 6.0:
+            if c1 == 1:
                 return "cation_pi"
         # ch-pi: sp3 carbon (apolar) vs ring
-        if ring1 and el2_u == "C" and dist < 5.0:
+        if ring1 and el2_u == "C" and not ring2 and ch_pi_ok:
             return "ch_pi"
-        if ring2 and el1_u == "C" and dist < 5.0:
+        if ring2 and el1_u == "C" and not ring1 and ch_pi_ok:
             return "ch_pi"
 
-    # 8. Polar / apolar vdW for contacts < 5.0 A
-    if dist < 5.0:
+    # 8. Clash: below the sum of vdW radii and no specific interaction
+    #    (COCOMAPS 2.0 convention)
+    if dist < (vdw_radius1 + vdw_radius2):
+        return "clash"
+
+    # 9. Polar / apolar vdW contacts require actual vdW-range proximity
+    #    (r1 + r2 + tolerance), matching COCOMAPS 2.0.
+    if dist <= (vdw_radius1 + vdw_radius2 + VDW_CONTACT_TOLERANCE):
         pol1 = is_polar_atom(a1, el1_u)
         pol2 = is_polar_atom(a2, el2_u)
         if pol1 or pol2:
             return "polar_vdw"
         return "apolar_vdw"
 
-    # 9. Within 5 A cutoff but unclassified
-    return "distal"
+    # 10. Within the 5 A cutoff but beyond vdW contact range
+    return "proximal"
 
 
 def _is_ring_atom(res_name: str, atom_name: str, element: str) -> bool:

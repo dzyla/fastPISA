@@ -18,12 +18,99 @@ import numpy as np
 from typing import List, Tuple
 
 
+def calculate_p_value_pisa(
+    solvation_energy: float,
+    buried_areas,
+    surface_sigmas,
+    surface_areas,
+) -> float:
+    """PISA's hydrophobicity P-value, computed from its actual definition.
+
+    P is the probability that a randomly drawn surface patch burying the
+    same per-atom areas would yield a solvation gain at least as negative as
+    the observed one (Krissinel & Henrick 2007). Under the random model each
+    buried patch ``b_j`` lands on a random surface atom whose ASP sigma is
+    drawn from the parent molecules' surface distribution (weighted by
+    exposed area), so
+
+        mean = sum(b_j) * E[sigma],  var = sum(b_j^2) * Var[sigma],
+        P = Phi((dG_obs - mean) / sqrt(var)).
+
+    Low P (< 0.5): the interface is more hydrophobic than a random surface
+    patch -- interaction-specific. High P: unremarkable, packing-like.
+
+    Parameters
+    ----------
+    solvation_energy : float
+        Observed interface solvation gain (kcal/mol).
+    buried_areas : array-like
+        Per-atom buried areas of the interface (A^2).
+    surface_sigmas : array-like
+        ASP sigma of each SURFACE atom of the two parent molecules.
+    surface_areas : array-like
+        Isolated-monomer ASA of those surface atoms (weights).
+    """
+    b = np.asarray(buried_areas, dtype=float)
+    s = np.asarray(surface_sigmas, dtype=float)
+    w = np.asarray(surface_areas, dtype=float)
+    if b.size == 0 or s.size == 0 or w.sum() <= 0:
+        return 0.5
+    mean_sigma = float(np.average(s, weights=w))
+    var_sigma = float(np.average((s - mean_sigma) ** 2, weights=w))
+    mean = b.sum() * mean_sigma
+    var = float((b ** 2).sum()) * var_sigma
+    if var <= 1e-12:
+        return 0.5
+    z = (solvation_energy - mean) / np.sqrt(var)
+    # The independent-atom variance underestimates the true patch variance
+    # (buried areas are correlated within residues), which over-spreads z.
+    # A single deflation constant fitted against EBI PISA p-values over the
+    # polymer-polymer interfaces of the 36-entry benchmark corrects for it
+    # (median |p error| 0.11, Spearman 0.73 on those interfaces). PISA's
+    # p-values for small-ligand/ion interfaces follow different statistics
+    # and are NOT reproduced by this model -- treat ligand-interface
+    # p-values as indicative only.
+    z *= P_VALUE_Z_SCALE
+    p = float(0.5 * (1 + erf(z / np.sqrt(2))))
+    return min(max(p, 0.0), 1.0)
+
+
+# Effective-z deflation for correlated buried patches (see above).
+P_VALUE_Z_SCALE = 0.219
+
+
+def calculate_css_pisa(solvation_energy: float, interface_area: float) -> float:
+    """CSS surrogate calibrated against original PISA's CSS.
+
+    PISA's true CSS comes from its crystal-wide assembly analysis (which
+    needs symmetry-mate enumeration -- out of fastPISA's scope). This
+    logistic surrogate was fitted to EBI PISA CSS values over the 36-entry
+    reference benchmark (262 interfaces):
+
+        css = sigmoid(-6.9088 - 0.1699 * dG_solv + 0.8485 * ln(1 + area))
+
+    Leave-one-PDB-out performance: Spearman 0.68 vs PISA's CSS, mean
+    absolute error 0.22, and 79% agreement on the css >= 0.5
+    biological-vs-packing call. Treat it as a well-behaved [0, 1]
+    significance score, not an exact reproduction.
+    """
+    x = (-6.9088
+         - 0.1699 * solvation_energy
+         + 0.8485 * np.log1p(max(interface_area, 0.0)))
+    return float(1.0 / (1.0 + np.exp(-x)))
+
+
 def calculate_p_value(
     solvation_energy: float,
     interface_area: float,
     total_asa: float,
 ) -> float:
-    """Calculate the P-value for an interface.
+    """LEGACY P-value model (superseded by :func:`calculate_p_value_pisa`).
+
+    The pipelines use :func:`calculate_p_value_pisa`, which implements
+    PISA's actual random-surface-patch definition and is validated against
+    the EBI PISA reference. This simpler area-scaled model is kept only for
+    backward compatibility with external callers.
 
     The P-value is defined as the probability that a random interface
     of the same area would have a solvation energy gain at least as
@@ -113,7 +200,10 @@ def calculate_css(
     n_residues: int,
     total_asa: float,
 ) -> float:
-    """Calculate the Complexation Significance Score (CSS).
+    """LEGACY CSS composite (superseded by :func:`calculate_css_pisa`).
+
+    The pipelines use :func:`calculate_css_pisa`, calibrated against original
+    PISA's CSS. Kept for backward compatibility with external callers.
 
     CSS is a composite score that combines:
     - Interface area (normalised by total surface area)

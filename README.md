@@ -1,17 +1,58 @@
 # fastPISA
 
-Local, fast analysis of biomolecular interfaces — a Python reproduction of the
-[PDBe PISA](https://www.ebi.ac.uk/pdbe/api/pisa/) interface/assembly schema, with
-an optional **COCOMAPS 2.0** contact-map mode. Reads PDB **and mmCIF** files
-(including AlphaFold predicted complexes).
+Local, fast analysis of biomolecular interfaces — a Python reproduction of
+[PISA](https://www.ebi.ac.uk/pdbe/pisa/) (Krissinel & Henrick 2007) calibrated
+against the original engine, with a **COCOMAPS 2.0** contact-map mode. Reads
+PDB **and mmCIF** files (including AlphaFold predicted complexes).
 
-Both modes share the same interface-detection and surface machinery, so they
-**always identify exactly the same interfaces** for a structure.
+All modes run one shared analysis core, so they **always identify exactly the
+same interfaces** for a structure.
 
 | Mode | What it reports | Output |
 |------|-----------------|--------|
-| `pisa` | Thermo/surface analysis: ASA/BSA, interface areas, ΔG, H-bonds / salt bridges / disulfides | PDBe PISA `assembly.json` + `interfaces.json` |
+| `combined` *(default)* | One unified report per interface: PISA thermodynamics **and** the COCOMAPS contact map | PISA schema + `interface_contact_map` per interface |
+| `pisa` | Thermo/surface analysis: ASA/BSA, interface areas, ΔG, P-value, CSS, H-bonds / salt bridges / disulfides | PDBe PISA `assembly.json` + `interfaces.json` |
 | `cocomaps` | Residue–residue contact map with atomic interaction-type classification (H-bond, salt bridge, pi-pi, cation-pi, ch-pi, …) | Superset of the PISA schema + `interface_contact_map` per interface |
+
+**Validated against original PISA** (EBI PDBe PISA service, 262 identity
+interfaces from 36 diverse PDB entries — proteases, antibodies, receptors,
+hemoglobin, protein–DNA/RNA, glycans, cofactors, ions; reproduce with
+`python examples/compare_vs_pisa.py`):
+
+| Quantity | All interfaces (n=262) | Polymer–polymer only (n=153)* |
+|---|---|---|
+| Interface area | median rel. error 2.2% (1.3% > 300 Å²) | 1.5% |
+| Solvation ΔG | Pearson 0.956, median error 1.05 kcal/mol | **Pearson 0.980** |
+| Stabilization energy | Pearson 0.977 (per-bond constants recovered exactly) | **Pearson 0.988** |
+| P-value | median error 0.12 | Spearman 0.72 |
+| CSS | Spearman 0.71 (calibrated surrogate) | Spearman 0.75 |
+| H-bond counts | 91% within ±1 | — |
+| Salt bridges | mean diff 0.08 per interface | — |
+| Disulfides | 100% exact | — |
+
+\* the cryo-EM / AlphaFold-model regime (protein/nucleic-acid chain pairs, no
+small-molecule ligand side). Verified out-of-sample twice: on 15 classic
+entries the fit had never seen (polymer–polymer ΔG Pearson 0.977), and on
+**20 recent (2023–2024) depositions** compared blind against the modern PDBe
+PISA 2.0 JSON API on biological-assembly coordinates — 87 interfaces, ΔG
+Pearson **0.978**, stab **0.986**, area 3.0% median, P-value error 0.11
+(`python examples/compare_vs_pisa.py --assembly-entries <ids>`). H-bond
+counts differ more vs PISA *2.0* (64% within ±1) than vs classic PISA (91%)
+— the two PISA versions themselves disagree on H-bond criteria; fastPISA is
+calibrated to the classic engine.
+
+**Validated against COCOMAPS 2.0** (the actual standalone tool, Zenodo
+`10.5281/zenodo.17390665`, run on the same inputs with REDUCE-added
+hydrogens): the residue–residue **contact map is identical** on all tested
+complexes — protein–protein (1ktz, 30/30 pairs), antibody–antigen (1vfb
+VH–lysozyme, 28/28) and protein–DNA (1aay zinc-finger, 57/57) — with
+identical interface residue sets, and COCOMAPS-convention salt bridges
+(including Lys/Arg–DNA-phosphate) matching per residue pair. Interaction
+classes follow COCOMAPS 2.0 conventions (vdW contacts within r₁+r₂+0.5 Å,
+"proximal" beyond, ring-geometry-validated π classes); the residual
+differences are H-dependent classes (their H-bonds come from HBPLUS, their
+weak C–H bonds use explicit-H angles), pinned in
+`tests/test_vs_cocomaps2.py`.
 
 ---
 
@@ -39,18 +80,19 @@ Shrake-Rupley implementation.
 ## Quick start (CLI)
 
 ```bash
-python -m fastpisa.cli 6nxr.pdb --pdb_id 6nxr --mode pisa --output_dir out
-python -m fastpisa.cli complex.cif --mode cocomaps --pdb_id my --time --json-summary -o out
+python -m fastpisa.cli 6nxr.pdb --pdb_id 6nxr --output_dir out            # combined (default)
+python -m fastpisa.cli complex.cif --mode pisa --pdb_id my --time --json-summary -o out
 ```
 
 Common options:
 
 | Flag | Meaning |
 |------|---------|
-| `--mode {pisa,cocomaps}` | Analysis mode (default `pisa`) |
+| `--mode {combined,pisa,cocomaps}` | Analysis mode (default `combined`) |
 | `--pdb_id` | PDB id used in output filenames |
 | `--probe_radius`, `--point_density`, `--interface_cutoff` | Core geometry knobs |
 | `--no-water` / `--with-water` | Exclude (default) or include ordered water in the interface search |
+| `--ligand-mode {separate,merge}` | `separate` (default): each bound hetero group is its own monomer, classic PISA. `merge`: a chain's ligands/cofactors count toward that chain's interfaces (jsPISA assembly convention) |
 | `--time` | Print wall-clock analysis time |
 | `--json-summary` | Print a compact JSON summary instead of the text report |
 | `-o`, `--output_dir` | Where to write the two JSON documents |
@@ -107,7 +149,7 @@ Key accessors on `PISAInterfaceAnalyzer`:
 - `.summary()` — human-readable report
 - `.write_json(dir)` — write the two JSON files, returns their paths
 - `.get_interface(id)` — fetch one interface object
-- `.mode` — set to `"pisa"` or `"cocomaps"`; `.analyze(recompute=True)` re-runs
+- `.mode` — `"combined"` (default), `"pisa"` or `"cocomaps"`; `.analyze(recompute=True)` re-runs
 
 ---
 
@@ -118,28 +160,33 @@ Key accessors on `PISAInterfaceAnalyzer`:
 CLI:
 
 ```bash
-# PISA mode -> PDBe-schema JSON
-python -m fastpisa.cli tests/data/1ktz.pdb --pdb_id 1ktz --mode pisa -o out
-
-# COCOMAPS mode -> adds a residue-residue contact map per interface
-python -m fastpisa.cli tests/data/1ktz.pdb --pdb_id 1ktz --mode cocomaps -o out
+# combined mode (default) -> PISA thermodynamics + COCOMAPS contact map
+python -m fastpisa.cli tests/data/1ktz.pdb --pdb_id 1ktz -o out --hotspots 5
 ```
 
 ```text
 === Summary ===
-Mode: cocomaps
+Mode: combined
 Interfaces found: 1
-Assembly dissociation energy: -97.06
+Assembly dissociation energy: 30.92
 Total ASA: 11576.73
 Total BSA: 541.13
 
 Top 5 hotspot residues (by buried area):
-  A94 (ARG) BSA=175.1 A^2  interfaces=[1]
-  A31 (LYS) BSA=125.2 A^2  interfaces=[1]
-  A91 (TYR) BSA=97.1 A^2   interfaces=[1]
-  B49 (SER) BSA=92.0 A^2   interfaces=[1]
-  B53 (ILE) BSA=79.0 A^2   interfaces=[1]
+  A94 (ARG) BSA=83.4 A^2  interfaces=[1]
+  B53 (ILE) BSA=81.9 A^2  interfaces=[1]
+  A91 (TYR) BSA=75.6 A^2  interfaces=[1]
+  A31 (LYS) BSA=70.2 A^2  interfaces=[1]
+  A93 (GLY) BSA=66.5 A^2  interfaces=[1]
+
+  Interface 1: 30 residue pairs
+    Interaction population: {'hydrogen_bond': 6, 'salt_bridge': 10,
+    'weak_hbond': 22, 'polar_vdw': 101, 'ch_pi': 73, 'apolar_vdw': 58, 'cation_pi': 6}
 ```
+
+For 1ktz's A–B interface original PISA reports area 493.4 Å², ΔG −4.3
+kcal/mol, P-value 0.50, 9 H-bonds, 8 salt bridges; fastPISA gives 483.5 Å²,
+−3.3 kcal/mol, P-value 0.52, 9 H-bonds, 8 salt bridges on the same input.
 
 Python — introspect the interfaces and write visualizations in one go:
 
@@ -234,7 +281,7 @@ CLI: `python -m fastpisa.cli complex.cif --pae complex_..._error.json --min-pae 
 
 ### Portable confidence from B-factors (pLDDT)
 
-The PAE JSON above is only emitted by Protenix / OpenDDE; most predictors do not
+The PAE JSON above is only emitted by Protenix-style pipelines; most predictors do not
 produce it. The broadly-applicable confidence signal is the **per-residue pLDDT in the
 B-factor column**, which AlphaFold, ColabFold and Protenix all write into the model
 (0-100, higher = more confident). No extra file is needed.
@@ -272,22 +319,60 @@ and `--hotspots N` prints the top-N buried residues. The matplotlib heatmap need
 
 ---
 
-## Benchmark vs original CCP4 PISA
+## What's new in 0.3.0
 
-On 7 structures (1.4k–10.6k atoms, total wall time for a single run of each):
+- **One shared analysis core** (`fastpisa/core.py`): all modes run the same
+  physics once; `combined` mode (new default) delivers PISA thermodynamics
+  *and* the COCOMAPS contact map in a single report.
+- **Numerical parity with original PISA**: PISA interface semantics
+  (buried-area-based detection), pair-specific buried surfaces, heavy-atom
+  surfaces, geometric H-bond detection, ASP table + P-value + CSS calibrated
+  against the EBI PISA engine (262 interfaces, 36 entries), PISA's per-bond
+  energy constants recovered exactly (−0.444/−0.150/−4.0 kcal/mol).
+- **COCOMAPS 2.0-faithful contact maps**: identical residue-pair maps
+  (validated against the actual COCOMAPS 2.0 tool), ring-geometry-validated
+  π classes, COCOMAPS conventions for salt bridges (incl. DNA phosphates),
+  vdW/proximal/clash classes, full per-pair class breakdowns.
+- **Faster**: local-delta per-pair surfaces, vectorised masks; GroEL/GroES
+  (58k atoms, 70 interfaces) in ~7 s with FreeSASA.
+- New: `ligand_mode="merge"`, `.pdb.gz` input, PDBe PISA 2.0 assembly
+  comparison (`--assembly-entries`), offline accuracy regression tests, CI.
 
-| | original PISA v2.2.0 (C++) | fastPISA pure-Python | fastPISA + FreeSASA |
-|---|---|---|---|
-| total | 18.2 s | 78.4 s | **5.05 s** |
+## Validation & benchmark vs original PISA
 
-With the FreeSASA C backend fastPISA is ~**3.6x faster than the original CCP4
-binary** and ~**15x faster** than our pure-Python implementation.
+**Ground truths used** (all comparisons reproducible from this repo):
 
-Note on interface *counts*: the original binary reports *all* crystal-packing
-contacts (including symmetry copies); fastPISA currently reports the interfaces
-present in the given coordinate set without applying crystallographic symmetry.
-So raw count comparison with PDBe differs for high-symmetry entries — this is a
-known, documented scope difference, not a per-mode bug.
+1. **Classic EBI PISA engine** — XML from
+   `https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/interfaces.pisa?<id>`; 36 entries
+   cached in `tests/data/reference/` (identity/ASU interfaces only). Drives
+   the calibration and `tests/test_vs_pdbe_pisa.py`.
+2. **PDBe PISA 2.0 JSON API** (biological assemblies; covers recent
+   entries) — blind test on 20 depositions from 2023–2024, fastPISA run on
+   the same assembly coordinates.
+3. **COCOMAPS 2.0 standalone code** (Zenodo `10.5281/zenodo.17390665`) run
+   locally on the same inputs; its residue-pair tables are cached in
+   `tests/data/reference/cocomaps2/` and pinned by
+   `tests/test_vs_cocomaps2.py`.
+
+Accuracy: `python examples/compare_vs_pisa.py` runs the full head-to-head
+against the original PISA engine (EBI PDBe PISA service; XML + PDB files
+cached under `tests/data/reference/`, so it works offline) and prints the
+agreement table shown at the top of this README. The same numbers are pinned
+as a regression test in `tests/test_vs_pdbe_pisa.py`. `--fetch <pdbid> ...`
+extends the benchmark with new entries (network required once).
+
+Speed (with the FreeSASA C backend): the original 21-entry benchmark runs in ~7 s
+total; GroEL/GroES (1aon: 58k atoms, 21 chains, 70 interfaces) takes 7.4 s in
+combined mode. fastPISA is ~3–4x faster than the original CCP4 binary on
+comparable inputs and ~15x faster than its own pure-Python fallback. Per-pair
+surfaces are computed only near each interface, so runtime scales with
+interface count and local size, not with (chains)² × structure size.
+
+Note on interface *counts*: original PISA run on a crystal entry also reports
+symmetry-mate (crystal packing) interfaces; fastPISA reports the interfaces
+present in the given coordinate set (the identity/ASU interfaces — everything
+an AlphaFold/cryo-EM model has). Comparisons therefore match on identity
+interfaces, which is a documented scope decision, not a bug.
 
 ---
 
@@ -295,38 +380,51 @@ known, documented scope difference, not a per-mode bug.
 
 ```
 fastpisa/
+├── core.py                # THE shared analysis core (all modes run this once)
 ├── api.py                 # PISAInterfaceAnalyzer class + analyze_interface()
 ├── cli.py                 # command-line interface
-├── pipeline.py            # PISA analysis pipeline
+├── pipeline.py            # PISA-mode entry point (thin wrapper over core)
 ├── pae.py                 # AlphaFold PAE / ipTM reading + interface filtering
 ├── viz.py                 # PyMOL script / matplotlib heatmap / Mol* HTML
 ├── batch.py               # parallel batch analysis (analyze_many)
 ├── cocomaps/              # COCOMAPS 2.0 mode
 │   ├── interactions.py    # atomic interaction-type classifier
+│   ├── rings.py           # ring centroids/normals for pi-class geometry
 │   ├── contact_map.py     # residue-residue contact map + matrix
-│   └── pipeline.py        # COCOMAPS analysis pipeline
-├── interface/contacts.py  # molecule detection, masks, contacts (shared)
+│   └── pipeline.py        # COCOMAPS-mode entry point (thin wrapper over core)
+├── interface/
+│   ├── contacts.py        # molecule detection, masks, contacts (shared)
+│   └── bonds.py           # geometric H-bond / salt-bridge / disulfide detection
 ├── surface/
 │   ├── shrake_rupley.py   # pure-Python Shrake-Rupley ASA
 │   └── freesasa_backend.py# optional C-accelerated ASA (auto-dispatched)
-├── energy/                # ΔGsolv, ΔGint, entropy
-├── scoring/               # P-value, CSS
+├── energy/                # PISA-calibrated ASP table, ΔGsolv, bond energies
+├── scoring/               # PISA-definition P-value, calibrated CSS
+├── reference/             # EBI PISA reference fetching + comparison harness
 ├── output/                # PDBe PISA JSON builders
-└── parser/pdb_parser.py   # PDB + mmCIF parsing (gemmi)
+└── parser/pdb_parser.py   # PDB(.gz) + mmCIF parsing (gemmi)
 ```
 
 ---
 
 ## Notes / caveats
 
+- **Calibration scope**: the ΔG/P-value/CSS calibration was fitted on the
+  21-entry EBI benchmark (leave-one-PDB-out validated). Single-ion interfaces
+  (a lone Zn²⁺/Ca²⁺) carry the largest relative ΔG errors — PISA uses
+  ion-specific desolvation terms that fastPISA approximates with one metal
+  class. CSS is a calibrated surrogate: exact CSS requires PISA's crystal-wide
+  assembly analysis.
 - **ASA/BSA convention**: with the FreeSASA backend, absolute ASA/BSA values use
   FreeSASA's parameters; with the pure-Python backend they use our 480-point
-  convention. Values differ in magnitude between the two backends, but interface
-  *detection* (which interfaces, residues and H-bonds exist) is identical.
-- **Symmetry**: biological-assembly prediction from crystallographic symmetry is
-  not yet implemented (see benchmark note).
+  convention. Values differ slightly between the two backends, but interface
+  *detection* is identical. Explicit hydrogens are excluded from all surfaces
+  (the PISA convention) but are used for H-bond geometry when present.
+- **Symmetry**: crystal-symmetry (packing-mate) interface enumeration and
+  biological-assembly prediction are not implemented (see benchmark note).
 - **COCOMAPS classifier** is a rule-based subset of COCOMAPS 2.0's 16 interaction
-  classes; it does not run HBPLUS or add hydrogens.
+  classes; H-bonds share fastPISA's geometric detector, but it does not run
+  HBPLUS or add hydrogens.
 
 ## License
 
