@@ -29,8 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastpisa.interface.contacts import Interface
-from fastpisa.pipeline import analyze_structure
-from fastpisa.cocomaps.pipeline import analyze_structure_cocomaps
+from fastpisa.core import analyze as _core_analyze, MODES
 
 
 class PISAInterfaceAnalyzer:
@@ -51,7 +50,10 @@ class PISAInterfaceAnalyzer:
     interface_cutoff : float
         Distance cutoff for interface-atom detection (default 5.0 A).
     mode : str
-        Analysis mode: ``"pisa"`` (default) or ``"cocomaps"``.
+        Analysis mode: ``"combined"`` (default; PISA energetics AND the
+        COCOMAPS contact map on every interface), ``"pisa"``, or
+        ``"cocomaps"``. All modes find identical interfaces (single shared
+        core).
     exclude_water : bool
         Exclude ordered water (HOH etc.) from the interface search
         (default True).
@@ -78,7 +80,7 @@ class PISAInterfaceAnalyzer:
         probe_radius: float = 1.4,
         point_density: int = 480,
         interface_cutoff: float = 5.0,
-        mode: str = "pisa",
+        mode: str = "combined",
         exclude_water: bool = True,
         min_css: float = 0.0,
     ):
@@ -131,12 +133,10 @@ class PISAInterfaceAnalyzer:
             exclude_water=self.exclude_water,
             min_css=self.min_css,
         )
-        if self.mode == "cocomaps":
-            result = analyze_structure_cocomaps(**kwargs)
-        elif self.mode == "pisa":
-            result = analyze_structure(**kwargs)
-        else:
-            raise ValueError(f"Unknown mode: {self.mode!r} (expected 'pisa' or 'cocomaps')")
+        if self.mode not in MODES:
+            raise ValueError(
+                f"Unknown mode: {self.mode!r} (expected one of {MODES})")
+        result = _core_analyze(mode=self.mode, **kwargs)
 
         self.result = result
         self.interfaces = result.get("interfaces_obj", [])
@@ -520,7 +520,7 @@ class PISAInterfaceAnalyzer:
 def analyze_interface(
     path: str,
     pdb_id: str = "unknown",
-    mode: str = "pisa",
+    mode: str = "combined",
     **kwargs,
 ) -> Dict[str, Any]:
     """One-shot function: analyze a structure and return the raw result.

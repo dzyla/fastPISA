@@ -2,18 +2,20 @@
 """
 fastPISA CLI: Local reproduction of PISA with COCOMAPS mode.
 
-Two complementary modes analyse a PDB/mmCIF structure:
+Three modes analyse a PDB/mmCIF structure (all find identical interfaces —
+they share one analysis core):
 
-  --mode pisa      (default) PISA thermodynamic/surface analysis, output in the
+  --mode combined  (default) One unified report: PISA thermodynamic/surface
+                   analysis AND the COCOMAPS contact map on every interface.
+
+  --mode pisa      PISA thermodynamic/surface analysis only, output in the
                    PDBe PISA JSON schema ('assembly' + 'interfaces').
 
-  --mode cocomaps  COCOMAPS 2.0 contact-map analysis. Identifies the same
-                   interfaces as PISA (same 5 A atom cutoff and surface
-                   machinery) but reports each interface as a residue-residue
-                   contact map with atomic interaction-type classification
-                   (H-bond, salt bridge, pi-pi, ...). The output is
-                   JSON-compatible with the PISA schema and additionally
-                   carries the contact-map fields.
+  --mode cocomaps  COCOMAPS 2.0 contact-map analysis. Reports each interface
+                   as a residue-residue contact map with atomic
+                   interaction-type classification (H-bond, salt bridge,
+                   pi-pi, ...). The output is JSON-compatible with the PISA
+                   schema and additionally carries the contact-map fields.
 
 Usage:
     python -m fastpisa.cli /path/to/structure.pdb --pdb_id 6nxr --output_dir ./out
@@ -52,8 +54,9 @@ def main():
 
     # Analysis mode & core parameters
     parser.add_argument(
-        "--mode", choices=["pisa", "cocomaps"], default="pisa",
-        help="Analysis mode: 'pisa' (default) or 'cocomaps'",
+        "--mode", choices=["combined", "pisa", "cocomaps"], default="combined",
+        help="Analysis mode: 'combined' (default; PISA energetics + COCOMAPS "
+             "contact maps in one report), 'pisa', or 'cocomaps'",
     )
     parser.add_argument(
         "--pdb_id", default="unknown",
@@ -254,7 +257,7 @@ def main():
             print(f"  {hs['chain']}{hs['seq']} "
                   f"({hs['residue']}) BSA={hs['bsa']:.1f} A^2  interfaces={hs['interfaces']}")
 
-    if args.mode == "cocomaps":
+    if args.mode in ("cocomaps", "combined"):
         for iface in analyzer.interfaces:
             iid = iface.interface_id
             cm = iface.cocomaps or {}

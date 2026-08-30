@@ -1,0 +1,415 @@
+"""Shared analysis core for all fastPISA modes.
+
+Every mode (``pisa``, ``cocomaps``, ``combined``) runs the exact same physics
+exactly once through :func:`run_core`:
+
+  parse -> molecules/masks -> combined ASA -> per-molecule isolated ASA ->
+  per-atom buried surface -> interface detection -> atom contacts ->
+  per-interface area / energies / P-value / CSS.
+
+The modes differ only in decoration:
+
+  * ``pisa``      -- bond counts from the PISA atom-contact classifier.
+  * ``cocomaps``  -- adds the residue-residue contact map + interaction
+                     populations; bond counts come from those populations.
+  * ``combined``  -- PISA bond counts AND the COCOMAPS contact map on the
+                     same interface objects (one unified report).
+
+Because the interfaces are detected once, the historical invariant "all modes
+find identical interfaces" is now true by construction.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+import logging
+import numpy as np
+from scipy.spatial import cKDTree
+
+from fastpisa.parser.pdb_parser import parse_pdb, parse_mmcif, PDBStructure
+from fastpisa.surface.shrake_rupley import calculate_asa, get_vdw_radius
+from fastpisa.interface.contacts import (
+    find_interface_atoms, find_contacts, get_molecules, get_molecule_masks,
+    filter_water_molecules, Interface,
+)
+from fastpisa.energy.energy import (
+    calculate_solvation_energy, calculate_contact_energy,
+    calculate_entropy, calculate_stabilization_energy,
+    calculate_assembly_dissociation_energy,
+)
+from fastpisa.scoring.scoring import calculate_p_value, calculate_css
+from fastpisa.surface.per_residue import (
+    compute_per_residue_surface, compute_buried_surface,
+)
+from fastpisa.output.json_output import build_interfaces_json, build_assembly_json
+
+logger = logging.getLogger(__name__)
+
+MODES = ("pisa", "cocomaps", "combined")
+
+
+@dataclass
+class CoreState:
+    """Everything the shared core computed for one structure."""
+    structure: PDBStructure
+    atoms: list
+    molecules: List[dict]
+    masks: List[np.ndarray]
+    asa_combined: Dict[int, float]
+    asa_alone: Dict[Tuple[int, int], float]
+    bsa_combined: Dict[int, float]
+    assembly_asa: float
+    assembly_bsa: float
+    total_asa_alone: Dict[int, float]
+    interfaces: List[Interface] = field(default_factory=list)
+
+
+def run_core(
+    input_file: str,
+    probe_radius: float = 1.4,
+    point_density: int = 480,
+    interface_cutoff: float = 5.0,
+    exclude_water: bool = True,
+    min_css: float = 0.0,
+    mode: str = "combined",
+    interaction_cutoff: float = 5.0,
+) -> CoreState:
+    """Run the shared analysis once and return the populated interfaces."""
+    if mode not in MODES:
+        raise ValueError(f"Unknown mode: {mode!r} (expected one of {MODES})")
+    want_cocomaps = mode in ("cocomaps", "combined")
+
+    # 1. Parse input file
+    if str(input_file).endswith((".cif", ".cif.gz")):
+        structure = parse_mmcif(input_file)
+    else:
+        structure = parse_pdb(input_file)
+
+    atoms = structure.atoms
+    if not atoms:
+        raise ValueError(f"No atoms found in {input_file}")
+    n_atoms = len(atoms)
+    logger.info("Parsed %d atoms from %s", n_atoms, input_file)
+
+    # 2. Molecules and masks (exclude ordered water from interface search)
+    molecules = get_molecules(structure)
+    molecules = filter_water_molecules(molecules, exclude_water=exclude_water)
+    masks = get_molecule_masks(atoms, molecules)
+    n_molecules = len(molecules)
+    logger.info("Found %d molecules", n_molecules)
+
+    # 3. KD-tree over all atoms (shared by every ASA call)
+    all_coords = np.array([[a.x, a.y, a.z] for a in atoms])
+    all_radii = np.array([get_vdw_radius(a.element) for a in atoms])
+    neighbor_cutoff = 2.0 * all_radii.max() + probe_radius + 1.0
+    kd_tree = cKDTree(all_coords)
+
+    asa_kwargs = dict(
+        probe_radius=probe_radius,
+        point_density=point_density,
+        kd_tree=kd_tree,
+        combined_coords=all_coords,
+        combined_radii=all_radii,
+        neighbor_cutoff=neighbor_cutoff,
+    )
+
+    # 4. Combined-structure ASA (once)
+    logger.info("Calculating combined-structure ASA...")
+    asa_combined = calculate_asa(atoms=atoms, **asa_kwargs)
+
+    # 5. Isolated ASA per molecule (buried = isolated - combined)
+    mol_atom_ids = [np.flatnonzero(mask).tolist() for mask in masks]
+    asa_alone: Dict[Tuple[int, int], float] = {}
+    for mol_idx in range(n_molecules):
+        ids = mol_atom_ids[mol_idx]
+        if not ids:
+            continue
+        asa = calculate_asa(
+            atoms=[atoms[i] for i in ids], atom_indices=ids, **asa_kwargs)
+        for gi in ids:
+            asa_alone[(mol_idx, gi)] = asa.get(gi, 0.0)
+
+    # 6. Per-atom buried surface + assembly totals
+    bsa_combined, assembly_asa, assembly_bsa = compute_buried_surface(
+        asa_alone, asa_combined, n_atoms, masks
+    )
+    logger.info("Combined ASA: %.1f A^2, BSA: %.1f A^2", assembly_asa, assembly_bsa)
+
+    total_asa_alone = {
+        mol_idx: sum(asa_alone.get((mol_idx, i), 0.0) for i in mol_atom_ids[mol_idx])
+        for mol_idx in range(n_molecules)
+    }
+
+    # 7. Detect interfaces between all molecule pairs
+    interfaces: List[Interface] = []
+    interface_id = 0
+
+    for mol1 in range(n_molecules):
+        for mol2 in range(mol1 + 1, n_molecules):
+            mask1, mask2 = masks[mol1], masks[mol2]
+            mol1_ids, mol2_ids = mol_atom_ids[mol1], mol_atom_ids[mol2]
+
+            idx1, idx2 = find_interface_atoms(atoms, mask1, mask2, interface_cutoff)
+            if len(idx1) == 0 or len(idx2) == 0:
+                continue
+
+            contacts = find_contacts(
+                atoms, mask1, mask2, mol1_ids, mol2_ids, idx1, idx2,
+            )
+            if len(contacts) == 0:
+                continue
+
+            # COCOMAPS residue contact map (same cutoff => same interfaces)
+            residue_contacts = None
+            if want_cocomaps:
+                from fastpisa.cocomaps.contact_map import build_residue_contact_map
+                residue_contacts = build_residue_contact_map(
+                    atoms, mask1, mask2, mol1_ids, mol2_ids, interaction_cutoff,
+                )
+
+            interface_id += 1
+
+            # Interface area: (ASA1_alone + ASA2_alone - ASA12) / 2
+            pair_ids = mol1_ids + mol2_ids
+            asa_12 = calculate_asa(
+                atoms=[atoms[i] for i in pair_ids], atom_indices=pair_ids,
+                **asa_kwargs)
+            total_asa_12 = sum(asa_12.get(gi, 0.0) for gi in pair_ids)
+            interface_area = max(
+                (total_asa_alone[mol1] + total_asa_alone[mol2] - total_asa_12) / 2.0,
+                0.0,
+            )
+
+            # Energies / scores (identical in every mode)
+            interface_atom_set = set(idx1) | set(idx2)
+            solv_energy = calculate_solvation_energy(
+                interface_atom_set, bsa_combined, atoms)
+            stab_energy = calculate_stabilization_energy(solv_energy, contacts)
+
+            n_res1 = len(set((atoms[i].res_seq, atoms[i].icode) for i in idx1))
+            n_res2 = len(set((atoms[i].res_seq, atoms[i].icode) for i in idx2))
+
+            p_value = calculate_p_value(
+                solv_energy, interface_area,
+                assembly_asa if assembly_asa > 0 else 1.0,
+            )
+            css = calculate_css(
+                interface_area, solv_energy, p_value,
+                len(contacts), n_res1 + n_res2,
+                assembly_asa if assembly_asa > 0 else 1.0,
+            )
+
+            iface = Interface(
+                interface_id=interface_id,
+                molecule1_id=mol1,
+                molecule2_id=mol2,
+                interface_area=round(interface_area, 2),
+                solvation_energy=round(solv_energy, 2),
+                stabilization_energy=round(stab_energy, 2),
+                p_value=round(p_value, 3),
+                css=round(css, 3),
+                number_interface_residues=n_res1 + n_res2,
+                contacts=contacts,
+            )
+
+            # Bond counts: PISA atom-contact classes, or (in pure cocomaps
+            # mode, for backward compatibility) the COCOMAPS interaction
+            # populations. The two agree on hbond/salt/disulfide chemistry
+            # because they share a single rule set.
+            if want_cocomaps:
+                from fastpisa.cocomaps.contact_map import aggregate_residue_pairs
+                from collections import Counter
+                population = dict(Counter(
+                    c.interaction_type for c in residue_contacts))
+                contact_map_entries = aggregate_residue_pairs(residue_contacts, atoms)
+                iface.cocomaps = {
+                    "interaction_population": population,
+                    "contact_map": contact_map_entries,
+                    "num_residue_pairs": len(contact_map_entries),
+                }
+
+            if mode == "cocomaps":
+                pop = iface.cocomaps["interaction_population"]
+                iface.number_hydrogen_bonds = pop.get("hydrogen_bond", 0)
+                iface.number_covalent_bonds = 0
+                iface.number_disulfide_bonds = pop.get("disulfide", 0)
+                iface.number_salt_bridges = pop.get("salt_bridge", 0)
+                iface.number_other_bonds = (
+                    pop.get("apolar_vdw", 0) + pop.get("polar_vdw", 0))
+            else:
+                iface.number_hydrogen_bonds = sum(
+                    1 for c in contacts if c.bond_type == "hbond")
+                iface.number_salt_bridges = sum(
+                    1 for c in contacts if c.bond_type == "salt_bridge")
+                iface.number_disulfide_bonds = sum(
+                    1 for c in contacts if c.bond_type == "disulfide")
+                iface.number_covalent_bonds = sum(
+                    1 for c in contacts if c.bond_type == "covalent")
+                iface.number_other_bonds = sum(
+                    1 for c in contacts if c.bond_type == "other")
+
+            # Per-residue surface data on both molecule entries
+            mol_info_1 = molecules[mol1].copy()
+            mol_info_1["int_natoms"] = len(idx1)
+            mol_info_1["int_nres"] = n_res1
+            mol_info_1.update(compute_per_residue_surface(
+                atoms, asa_combined, bsa_combined, set(idx1), mol1_ids))
+            mol_info_2 = molecules[mol2].copy()
+            mol_info_2["int_natoms"] = len(idx2)
+            mol_info_2["int_nres"] = n_res2
+            mol_info_2.update(compute_per_residue_surface(
+                atoms, asa_combined, bsa_combined, set(idx2), mol2_ids))
+            iface.molecules = [mol_info_1, mol_info_2]
+
+            interfaces.append(iface)
+
+    # Optional significance filter (drop weak / artifact interfaces)
+    if min_css > 0:
+        interfaces = [i for i in interfaces if i.css >= min_css]
+        for idx, iface in enumerate(interfaces):
+            iface.interface_id = idx + 1
+
+    return CoreState(
+        structure=structure,
+        atoms=atoms,
+        molecules=molecules,
+        masks=masks,
+        asa_combined=asa_combined,
+        asa_alone=asa_alone,
+        bsa_combined=bsa_combined,
+        assembly_asa=assembly_asa,
+        assembly_bsa=assembly_bsa,
+        total_asa_alone=total_asa_alone,
+        interfaces=interfaces,
+    )
+
+
+def build_documents(
+    state: CoreState,
+    pdb_id: str = "unknown",
+    assembly_id: str = "1",
+) -> dict:
+    """Assemble the ``interfaces``/``assembly`` JSON documents from a core run.
+
+    The assembly dissociation energy uses the PISA-mode formula
+    (sum over interfaces of ``-(dG_solv + dG_contact) + TdS``) in every mode.
+    """
+    interfaces = state.interfaces
+    molecules = state.molecules
+
+    total_interface_area = sum(i.interface_area for i in interfaces)
+    total_solv_energy = sum(i.solvation_energy for i in interfaces)
+
+    solv_energies = [i.solvation_energy for i in interfaces]
+    contact_energies = [calculate_contact_energy(i.contacts)[0] for i in interfaces]
+    entropies = [
+        calculate_entropy(
+            i.interface_area,
+            i.number_interface_residues // 2,
+            i.number_interface_residues - i.number_interface_residues // 2,
+        )
+        for i in interfaces
+    ]
+    diss_energy = calculate_assembly_dissociation_energy(
+        [i.interface_area for i in interfaces],
+        solv_energies, contact_energies, entropies,
+    )
+
+    formula = _build_formula(molecules)
+    composition = _build_composition(molecules)
+    n_macromolecular = sum(
+        1 for m in molecules if m.get("chain_type") == "polymer")
+
+    common = dict(
+        pdb_id=pdb_id,
+        assembly_id=assembly_id,
+        assembly_mmsize=str(n_macromolecular),
+        assembly_dissociation_energy=round(diss_energy, 2),
+        assembly_asa=round(state.assembly_asa, 2),
+        assembly_bsa=round(state.assembly_bsa, 2),
+        assembly_entropy=round(sum(entropies), 2),
+        assembly_dissociation_area=round(total_interface_area, 2),
+        assembly_solvation_energy_gain=round(total_solv_energy, 2),
+        assembly_formula=formula,
+        assembly_composition=composition,
+    )
+
+    interfaces_json = build_interfaces_json(
+        interfaces=interfaces,
+        total_atoms=len(state.atoms),
+        total_asa=state.assembly_asa,
+        **common,
+    )
+    assembly_json = build_assembly_json(
+        assembly_size=str(len(molecules)),
+        **common,
+    )
+
+    return {
+        "interfaces": interfaces_json,
+        "assembly": assembly_json,
+        "interfaces_obj": interfaces,
+    }
+
+
+def analyze(
+    input_file: str,
+    pdb_id: str = "unknown",
+    assembly_id: str = "1",
+    probe_radius: float = 1.4,
+    point_density: int = 480,
+    interface_cutoff: float = 5.0,
+    exclude_water: bool = True,
+    min_css: float = 0.0,
+    mode: str = "combined",
+    interaction_cutoff: float = 5.0,
+) -> dict:
+    """One-call analysis: run the core in the given mode and build the JSON."""
+    state = run_core(
+        input_file,
+        probe_radius=probe_radius,
+        point_density=point_density,
+        interface_cutoff=interface_cutoff,
+        exclude_water=exclude_water,
+        min_css=min_css,
+        mode=mode,
+        interaction_cutoff=interaction_cutoff,
+    )
+    return build_documents(state, pdb_id=pdb_id, assembly_id=assembly_id)
+
+
+def _build_formula(molecules):
+    """Build the formula string (e.g., 'A(2)a(2)b(2)')."""
+    from collections import Counter
+    class_counts = Counter(m.get("molecule_class", "Other") for m in molecules)
+    formula_parts = []
+    for cls, count in sorted(class_counts.items()):
+        if cls == "Protein":
+            letter = "A"
+        elif cls == "NucleicAcid":
+            letter = "a"
+        elif cls == "Ligand":
+            letter = "b"
+        else:
+            letter = "x"
+        if count == 1:
+            formula_parts.append(letter)
+        else:
+            formula_parts.append(f"{letter}({count})")
+    return "".join(formula_parts)
+
+
+def _build_composition(molecules):
+    """Build the composition string (e.g., 'A-2A[NA](2)[GOL](2)')."""
+    parts = []
+    for mol in molecules:
+        cls = mol.get("molecule_class", "Other")
+        chain_id = mol.get("auth_asym_id", "")
+        if cls == "Ligand":
+            ccd = mol.get("ccd_id", "")
+            parts.append(f"[{ccd}]({chain_id})")
+        else:
+            parts.append(chain_id)
+    return "-".join(parts)
