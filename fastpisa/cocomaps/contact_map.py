@@ -73,6 +73,9 @@ def build_residue_contact_map(
     if len(coords1) == 0 or len(coords2) == 0:
         return contacts
 
+    from fastpisa.cocomaps.rings import RingContext
+    ring_ctx = RingContext(atoms, mol1_atom_indices, mol2_atom_indices)
+
     tree = cKDTree(coords2)
     dist_pairs = tree.query_ball_point(coords1, interface_cutoff)
 
@@ -89,6 +92,11 @@ def build_residue_contact_map(
             is_hb = None
             if hbond_pairs is not None:
                 is_hb = (min(g1, g2), max(g1, g2)) in hbond_pairs
+            pi_verdicts = (
+                ring_ctx.is_pi_pi(g1, g2),
+                ring_ctx.is_cation_pi(g1, g2) or ring_ctx.is_cation_pi(g2, g1),
+                ring_ctx.is_ch_pi(g1, g2) or ring_ctx.is_ch_pi(g2, g1),
+            )
             itype = classify_atom_pair(
                 res1=a1.res_name,
                 atom1=a1.atom_name,
@@ -100,6 +108,7 @@ def build_residue_contact_map(
                 vdw_radius1=get_vdw_radius(a1.element),
                 vdw_radius2=get_vdw_radius(a2.element),
                 is_hbond=is_hb,
+                pi_verdicts=pi_verdicts,
             )
             contacts.append(ResidueContact(
                 atom1_idx=g1,
@@ -167,16 +176,25 @@ def aggregate_residue_pairs(
         entry["num_contacts"] += 1
         entry["interaction_counts"][c.interaction_type] += 1
 
-    # Determine dominant type, select from counted types
+    # Determine dominant type; keep the full per-class breakdown per pair
+    # (COCOMAPS 2.0 lists every class a residue pair participates in).
+    # "proximal" is only dominant when NO other class is present, and
+    # specific interactions dominate generic vdW contacts.
+    _GENERIC = ("proximal", "clash", "polar_vdw", "apolar_vdw", "weak_hbond")
     result = []
     for key, entry in sorted(pairs.items()):
         counts = dict(entry.pop("interaction_counts"))
-        # dominant = most frequent non-clash type; clashes sorted first if no others
-        if counts:
-            dominant = max(counts.items(), key=lambda kv: kv[1])[0]
+        specific = {t: n for t, n in counts.items() if t not in _GENERIC}
+        if specific:
+            dominant = max(specific.items(), key=lambda kv: kv[1])[0]
+        elif counts:
+            dominant = next((t for t in ("weak_hbond", "apolar_vdw", "polar_vdw",
+                                         "clash", "proximal") if t in counts),
+                            "proximal")
         else:
-            dominant = "distal"
+            dominant = "proximal"
         entry["dominant_interaction"] = dominant
+        entry["interaction_counts"] = counts
         result.append(entry)
 
     return result

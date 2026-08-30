@@ -1,0 +1,31 @@
+,Res. Name 1,Res. Number 1,Chain 1,Res. Name 2,Res. Number 2,Chain 2,Type of Interactions
+7,ARG,25,A,THR,51,B,Proximal contact
+12,ARG,25,A,GLU,119,B,; Salt-bridge; Polar vdW contact
+86,LYS,31,A,THR,51,B,; CH-O/N bond
+95,LYS,31,A,LEU,27,B,; Apolar vdW contact
+122,LYS,31,A,GLU,119,B,; CH-O/N bond
+131,LYS,31,A,ASP,118,B,Proximal contact
+281,TRP,32,A,THR,51,B,Proximal contact
+288,TRP,32,A,LEU,27,B,Proximal contact
+296,TRP,32,A,ILE,53,B,; Apolar vdW contact
+466,HIS,34,A,THR,51,B,Proximal contact
+472,HIS,34,A,SER,49,B,; CH-O/N bond; Polar vdW contact; Polar vdW contact
+480,HIS,34,A,ILE,50,B,Proximal contact
+556,TYR,90,A,ILE,53,B,; Apolar vdW contact
+625,TYR,91,A,SER,52,B,Proximal contact
+629,TYR,91,A,ILE,53,B,Clash
+650,TYR,91,A,THR,51,B,Proximal contact
+662,TYR,91,A,ILE,50,B,; CH-π interaction; CH-π interaction; Apolar vdW contact; Apolar vdW contact; Apolar vdW contact; Apolar vdW contact
+844,VAL,92,A,ILE,53,B,; CH-O/N bond; Polar vdW contact; Polar vdW contact
+852,VAL,92,A,SER,52,B,; Polar vdW contact
+878,VAL,92,A,CYS,54,B,Proximal contact
+882,VAL,92,A,GLU,55,B,; Apolar vdW contact
+1001,GLY,93,A,ILE,53,B,Clash
+1006,GLY,93,A,CYS,54,B,Proximal contact
+1008,GLY,93,A,GLU,55,B,Proximal contact
+1046,GLY,93,A,PHE,30,B,; Polar vdW contact; Polar vdW contact; Polar vdW contact; Polar vdW contact
+1074,GLY,93,A,SER,52,B,; Polar vdW contact; Polar vdW contact; Polar vdW contact
+1177,ARG,94,A,SER,52,B,Proximal contact
+1253,ARG,94,A,PHE,30,B,; CH-π interaction; Polar vdW contact; Polar vdW contact; Apolar vdW contact
+1258,ARG,94,A,ASP,32,B,; Salt-bridge; Polar vdW contact; Polar vdW contact
+1260,ARG,94,A,VAL,77,B,Proximal contact

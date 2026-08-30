@@ -41,6 +41,19 @@ counts differ more vs PISA *2.0* (64% within ±1) than vs classic PISA (91%)
 — the two PISA versions themselves disagree on H-bond criteria; fastPISA is
 calibrated to the classic engine.
 
+**Validated against COCOMAPS 2.0** (the actual standalone tool, Zenodo
+`10.5281/zenodo.17390665`, run on the same inputs with REDUCE-added
+hydrogens): the residue–residue **contact map is identical** on all tested
+complexes — protein–protein (1ktz, 30/30 pairs), antibody–antigen (1vfb
+VH–lysozyme, 28/28) and protein–DNA (1aay zinc-finger, 57/57) — with
+identical interface residue sets, and COCOMAPS-convention salt bridges
+(including Lys/Arg–DNA-phosphate) matching per residue pair. Interaction
+classes follow COCOMAPS 2.0 conventions (vdW contacts within r₁+r₂+0.5 Å,
+"proximal" beyond, ring-geometry-validated π classes); the residual
+differences are H-dependent classes (their H-bonds come from HBPLUS, their
+weak C–H bonds use explicit-H angles), pinned in
+`tests/test_vs_cocomaps2.py`.
+
 ---
 
 ## Install

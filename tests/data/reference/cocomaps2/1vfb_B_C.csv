@@ -1,0 +1,29 @@
+,Res. Name 1,Res. Number 1,Chain 1,Res. Name 2,Res. Number 2,Chain 2,Type of Interactions
+12,THR,30,B,LYS,116,C,Proximal contact
+14,THR,30,B,GLY,117,C,Proximal contact
+72,GLY,31,B,LYS,116,C,; CH-O/N bond
+86,GLY,31,B,GLY,117,C,; Polar vdW contact; Polar vdW contact
+137,TYR,32,B,GLY,117,C,Proximal contact
+177,TYR,32,B,LYS,116,C,Proximal contact
+224,TRP,52,B,GLY,117,C,Proximal contact
+266,TRP,52,B,THR,118,C,; Polar vdW contact; Polar vdW contact
+293,TRP,52,B,ASP,119,C,; CH-π interaction; Polar vdW contact; Polar vdW contact; Apolar vdW contact; Apolar vdW contact; Apolar vdW contact; Apolar vdW contact; Apolar vdW contact
+392,GLY,53,B,GLY,117,C,; Polar vdW contact
+426,ASP,54,B,GLY,117,C,Proximal contact
+462,ASP,54,B,THR,118,C,; CH-O/N bond
+468,ASP,54,B,ASP,119,C,Proximal contact
+523,ARG,99,B,TYR,23,C,Proximal contact
+528,ARG,99,B,GLY,102,C,Clash
+534,ARG,99,B,ASN,103,C,Proximal contact
+638,ASP,100,B,SER,24,C,Clash
+645,ASP,100,B,ASN,27,C,Proximal contact
+648,ASP,100,B,VAL,120,C,Proximal contact
+655,ASP,100,B,GLY,22,C,Clash
+657,ASP,100,B,TYR,23,C,; CH-O/N bond; Polar vdW contact
+716,TYR,101,B,SER,24,C,Proximal contact
+796,TYR,101,B,THR,118,C,Proximal contact
+803,TYR,101,B,ASP,119,C,; Polar vdW contact; Polar vdW contact
+808,TYR,101,B,VAL,120,C,; Apolar vdW contact
+818,TYR,101,B,GLN,121,C,; Apolar vdW contact; Apolar vdW contact
+828,TYR,101,B,ALA,122,C,Proximal contact
+946,ARG,102,B,GLY,22,C,; Polar vdW contact
