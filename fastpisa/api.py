@@ -396,7 +396,7 @@ class PISAInterfaceAnalyzer:
 
         AlphaFold / ColabFold / Protenix store pLDDT (0-100) in B-factors, so
         this works for any predictor with no extra JSON -- unlike ``load_pae``,
-        whose ``*_predicted_aligned_error.json`` is Protenix/OpenDDE-specific.
+        whose ``*_predicted_aligned_error.json`` only some pipelines emit.
         Raises ValueError if the model carries no meaningful B-factors.
         """
         from fastpisa.pae import build_plddt_map

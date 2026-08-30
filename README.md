@@ -255,7 +255,7 @@ CLI: `python -m fastpisa.cli complex.cif --pae complex_..._error.json --min-pae 
 
 ### Portable confidence from B-factors (pLDDT)
 
-The PAE JSON above is only emitted by Protenix / OpenDDE; most predictors do not
+The PAE JSON above is only emitted by Protenix-style pipelines; most predictors do not
 produce it. The broadly-applicable confidence signal is the **per-residue pLDDT in the
 B-factor column**, which AlphaFold, ColabFold and Protenix all write into the model
 (0-100, higher = more confident). No extra file is needed.

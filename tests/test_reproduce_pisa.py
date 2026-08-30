@@ -1,9 +1,10 @@
 """Reproducibility tests: fastPISA vs the original CCP4 PISA binary.
 
-These are the publishability checks. For each structure we run the ORIGINAL
-PISA v2.2.0 binary (`/programs/xtal/ccp4-9/bin/pisa`) and parse its
-`-list interfaces` output (interface count + area per chain pair), then compare
-against fastPISA on the same input. The hard acceptance criteria:
+These are the publishability checks. For each structure we run an ORIGINAL
+CCP4 PISA binary (location supplied via the FASTPISA_PISA_BIN environment
+variable) and parse its `-list interfaces` output (interface count + area per
+chain pair), then compare against fastPISA on the same input. The hard
+acceptance criteria:
 
   * interface COUNT must match the original binary, and
   * per-pair interface AREA must agree within ~10% (elliptic-surface-area
@@ -25,8 +26,8 @@ import gemmi
 from fastpisa.api import PISAInterfaceAnalyzer
 
 from conftest import (
-    PISA_BIN, CASP17_DIR, needs_pisa_bin, needs_casp17, REPO_ROOT,
-    run_pisa_binary_analyse, pisa_list_interfaces, KTZ,
+    PISA_BIN, EXTERNAL_MODELS_GLOB, needs_pisa_bin, needs_external_models,
+    REPO_ROOT, run_pisa_binary_analyse, pisa_list_interfaces, KTZ,
 )
 
 
@@ -142,18 +143,22 @@ def test_1ktz_matches_original_pisa(tmp_path):
     )
 
 
-@needs_pisa_bin
-@needs_casp17
-@pytest.mark.parametrize("case", ["H1443", "H1400", "H2343", "H1346"])
-def test_casp17_matches_original_pisa(case, tmp_path):
-    """CASP17 antibody AlphaFold models: interface set + areas vs PISA.
+def _external_model_cifs():
+    return sorted(glob.glob(EXTERNAL_MODELS_GLOB)) if EXTERNAL_MODELS_GLOB else []
 
-    These models have NO crystal data, so the original binary reports exactly
-    the asymmetric-unit interfaces -- a direct apples-to-apples comparison
-    (counts AND per-pair areas) with fastPISA.
+
+@needs_pisa_bin
+@needs_external_models
+@pytest.mark.parametrize("cif", _external_model_cifs())
+def test_external_models_match_original_pisa(cif, tmp_path):
+    """Predicted models (no crystal data): interface set + areas vs PISA.
+
+    Point FASTPISA_EXTERNAL_MODELS_GLOB at any set of AlphaFold-style
+    multi-chain CIFs. Such models have NO crystal data, so the original
+    binary reports exactly the asymmetric-unit interfaces -- a direct
+    apples-to-apples comparison (counts AND per-pair areas) with fastPISA.
     """
-    cif = sorted(glob.glob(os.path.join(
-        CASP17_DIR, case, case, "seed_101", "predictions", "*.cif")))[0]
+    case = os.path.splitext(os.path.basename(cif))[0]
     ref = collect_one(cif, tmp_path, f"__r_{case}")
     assert len(ref) >= 1, f"original PISA found no interfaces for {case}"
     ref_by_pair = {tuple(sorted([i["chain1"], i["chain2"]])): i for i in ref}

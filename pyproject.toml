@@ -34,9 +34,9 @@ fastpisa = ["py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-# Reproducibility tests shell out to the original CCP4 PISA binary and to
-# OpenDDE structure files; the default test run (unit + integration on 1ktz)
-# does not need those, but they are enabled automatically when available.
+# Reproducibility tests shell out to an original CCP4 PISA binary and to
+# external model files (FASTPISA_* environment variables); the default test
+# run does not need those and skips them when unset.
 markers = [
     "reproduce: compares fastPISA against the original CCP4 PISA binary",
 ]

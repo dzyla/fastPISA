@@ -1,9 +1,8 @@
 """Regression tests for three defects found by calibrating against CCP4 PISA v2.2.0.
 
-Ground truth for the calibration was the original binary at
-/programs/xtal/ccp4-9/bin/pisa run as `-analyse` then `-list interfaces`, over 7
-antibody-antigen reference structures from the CASP17 immune-complex category
-(63 interfaces matched to fastPISA's own by chain pair).
+Ground truth for the calibration was an original CCP4 PISA binary run as
+`-analyse` then `-list interfaces`, over 7 antibody-antigen reference
+structures (63 interfaces matched to fastPISA's own by chain pair).
 
 What that calibration showed, and what these tests pin:
 
@@ -64,7 +63,7 @@ class TestPValueIsNotDegenerate:
     """The P-value must vary with interface chemistry, not clamp for everything."""
 
     def test_p_value_varies_across_realistic_interfaces(self):
-        # Interfaces spanning the range seen in the CASP17 references (24 - 3700 A^2),
+        # Interfaces spanning the range seen in the references (24 - 3700 A^2),
         # each with a plausible solvation energy for its size.
         cases = [(-2.9, 24.0), (-29.5, 316.0), (-22.7, 468.0),
                  (-19.2, 736.0), (-176.6, 3692.0)]

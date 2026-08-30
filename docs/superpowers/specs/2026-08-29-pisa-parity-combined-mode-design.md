@@ -14,7 +14,7 @@ Ground truth on this machine: the EBI PISA web service
 (`https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/interfaces.pisa?<pdbid>`) returns
 original-PISA XML per entry: per-interface `int_area`, `int_solv_en`,
 `pvalue`, `stab_en`, `css`, and full H-bond / salt-bridge / disulfide atom
-lists. The CCP4 binary tests remain and keep working on the lab machine.
+lists. The optional CCP4-binary tests remain, gated on environment variables.
 
 ## Findings driving the design (review of 2026-08-29)
 
@@ -90,9 +90,9 @@ lists. The CCP4 binary tests remain and keep working on the lab machine.
   runs fastPISA, and emits a comparison table (area/ΔG/bonds/P-value/CSS
   deltas + summary statistics).
 - GitHub Actions CI: pytest on 3.10–3.12, with and without freesasa.
-- `tests/conftest.py` machine paths become environment variables
-  (`FASTPISA_PISA_BIN`, `FASTPISA_CASP17_DIR`, `FASTPISA_OPENDDE_AB`) with
-  the current lab paths as defaults.
+- `tests/conftest.py` external resources become environment variables
+  (`FASTPISA_PISA_BIN`, `FASTPISA_EXTERNAL_MODELS_GLOB`,
+  `FASTPISA_EXTERNAL_CIF`) with no committed default paths.
 - Uncommitted working-tree changes: keep `weight_energies_by_confidence` and
   the entropy docstring edit (committed as-is); drop the always-skipped
   Ponstingl placeholder test.

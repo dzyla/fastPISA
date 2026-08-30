@@ -105,7 +105,7 @@ def interface_pae_score(interface, atoms, pae_index: Dict[Tuple[str, int, str], 
 # ---------------------------------------------------------------------------
 # B-factor / pLDDT confidence (portable across predictors)
 # ---------------------------------------------------------------------------
-# The AF *predicted_aligned_error.json* is Protenix/OpenDDE-specific and useless
+# The AF *predicted_aligned_error.json* is emitted only by some pipelines and useless
 # for most other methods. The portable confidence signal is the per-residue
 # pLDDT, which AlphaFold, ColabFold and Protenix all write into the **B-factor
 # column** of the output PDB/mmCIF (0-100, higher = more confident). A b-factor

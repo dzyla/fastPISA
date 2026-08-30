@@ -63,9 +63,9 @@ python examples/compare_vs_pisa.py  # human-readable accuracy table
 reference cache lives in `tests/data/reference/` (21 entries; extend with
 `examples/compare_vs_pisa.py --fetch <pdbid>`).
 
-Machine-specific integration tests (original CCP4 binary, CASP17/OpenDDE
-models) skip when absent; override locations with `FASTPISA_PISA_BIN`,
-`FASTPISA_CASP17_DIR`, `FASTPISA_OPENDDE_AB`.
+Optional integration tests (original CCP4 binary, external model sets) are
+enabled via `FASTPISA_PISA_BIN`, `FASTPISA_EXTERNAL_MODELS_GLOB` and
+`FASTPISA_EXTERNAL_CIF`, and skip when unset.
 
 ## Environment
 
@@ -81,6 +81,5 @@ models) skip when absent; override locations with `FASTPISA_PISA_BIN`,
   `https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/interfaces.pisa?<pdbid>`
   (NOTE: its per-residue `solv_en` values are sign-inverted relative to the
   interface `int_solv_en`).
-- Original CCP4 binary (lab machine): `/programs/xtal/ccp4-9/bin/pisa` v2.2.0.
 - COCOMAPS 2.0: Chawla et al., Bioinformatics (2025), PMC12684709.
 - Design spec: `docs/superpowers/specs/2026-08-29-pisa-parity-combined-mode-design.md`.

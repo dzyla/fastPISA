@@ -80,7 +80,8 @@ python examples/compare_vs_pisa.py        # accuracy table vs original PISA
 
 - PISA paper: Krissinel & Henrick, JMB 372:774–797 (2007). Schema: PDBe-KB/pdbe-pisa-json.
 - Original PISA ground truth: EBI service `https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/interfaces.pisa?<pdbid>`
-  (fetch/parse via `fastpisa/reference/`); CCP4 binary tests need the lab machine
-  (paths overridable via FASTPISA_PISA_BIN / FASTPISA_CASP17_DIR / FASTPISA_OPENDDE_AB).
+  (fetch/parse via `fastpisa/reference/`); optional CCP4-binary tests are
+  enabled via FASTPISA_PISA_BIN / FASTPISA_EXTERNAL_MODELS_GLOB /
+  FASTPISA_EXTERNAL_CIF (skip when unset).
 - COCOMAPS 2.0: Chawla et al., Bioinformatics (2025), PMC12684709.
 - Design spec: docs/superpowers/specs/2026-08-29-pisa-parity-combined-mode-design.md

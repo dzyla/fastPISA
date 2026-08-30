@@ -20,7 +20,7 @@ from fastpisa.api import PISAInterfaceAnalyzer
 from fastpisa.parser.pdb_parser import Atom, Chain, PDBStructure
 from fastpisa.interface.contacts import get_molecules, NUCLEIC_ACIDS
 
-from conftest import KTZ, OPENDDE_AB, needs_opendde, REPO_ROOT
+from conftest import KTZ, EXTERNAL_CIF, needs_external_cif, REPO_ROOT
 
 
 # ---------------------------------------------------------------------------
@@ -44,9 +44,9 @@ class TestModeCountAgreement:
     def test_1ktz_counts_agree(self):
         _assert_counts_agree(KTZ)
 
-    @needs_opendde
+    @needs_external_cif
     def test_hfree_counts_agree(self):
-        _assert_counts_agree(OPENDDE_AB)
+        _assert_counts_agree(EXTERNAL_CIF)
 
 
 # ---------------------------------------------------------------------------
@@ -59,9 +59,9 @@ class TestNoGenericCovalent:
             assert iface.number_covalent_bonds == 0
             assert all(ct.bond_type != "covalent" for ct in iface.contacts)
 
-    @needs_opendde
+    @needs_external_cif
     def test_no_covalent_on_hfree(self):
-        p = PISAInterfaceAnalyzer(OPENDDE_AB, pdb_id="x", mode="pisa").analyze()
+        p = PISAInterfaceAnalyzer(EXTERNAL_CIF, pdb_id="x", mode="pisa").analyze()
         for iface in p["interfaces_obj"]:
             assert iface.number_covalent_bonds == 0
 
