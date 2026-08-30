@@ -26,6 +26,12 @@ from typing import Dict, List, Optional
 EBI_PISA_URL = "https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/interfaces.pisa?{pdbid}"
 RCSB_PDB_URL = "https://files.rcsb.org/download/{pdbid}.pdb"
 
+# Modern PDBe PISA JSON API (covers recent entries; the classic CGI above has
+# a frozen database). It reports the analysis of a BIOLOGICAL ASSEMBLY, so
+# fastPISA must be run on the matching assembly coordinate file.
+PDBE_PISA_JSON_URL = "https://www.ebi.ac.uk/pdbe/api/pisa/interfaces/{pdbid}/{assembly}"
+RCSB_ASSEMBLY_URL = "https://files.rcsb.org/download/{pdbid}-assembly{assembly}.cif.gz"
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REFERENCE_DIR = os.path.join(_REPO_ROOT, "tests", "data", "reference")
 
@@ -59,9 +65,17 @@ def fetch_pisa_xml(pdb_id: str, cache_dir: str = REFERENCE_DIR,
         text = resp.read().decode("utf-8", errors="replace")
     if "<pisa_interfaces>" not in text:
         raise RuntimeError(f"EBI PISA returned no interface XML for {pdb_id}")
-    status = ET.fromstring(text).findtext("status")
+    root = ET.fromstring(text)
+    status = root.findtext("status")
     if status and status.strip().lower() != "ok":
         raise RuntimeError(f"EBI PISA status {status!r} for {pdb_id}")
+    entry_status = root.findtext("pdb_entry/status")
+    if entry_status and entry_status.strip().lower() != "ok":
+        # The classic CGI's database is frozen; recent entries come back as
+        # "Entry not found". Do NOT cache that -- use the PDBe JSON API
+        # (fetch_pisa_assembly_json) for such entries instead.
+        raise RuntimeError(
+            f"EBI PISA (classic CGI) has no data for {pdb_id}: {entry_status}")
     with gzip.open(path, "wt") as fh:
         fh.write(text)
     return text
@@ -194,3 +208,79 @@ def cached_pdb_path(pdb_id: str, cache_dir: str = REFERENCE_DIR) -> Optional[str
     """Path to the cached PDB file (``.pdb.gz``), or None if not cached."""
     path = os.path.join(cache_dir, "pdb", f"{pdb_id.lower()}.pdb.gz")
     return path if os.path.exists(path) else None
+
+
+# ---------------------------------------------------------------------------
+# Modern PDBe PISA JSON API (assembly-based; works for recent entries)
+# ---------------------------------------------------------------------------
+def fetch_pisa_assembly_json(pdb_id: str, assembly: str = "1",
+                             cache_dir: str = REFERENCE_DIR,
+                             timeout: int = 120) -> dict:
+    """PDBe PISA JSON for one biological assembly (cached, gzipped).
+
+    Returns the inner document: ``{"assembly_id", "pisa_version",
+    "assembly": {..., "interfaces": [...]}}``.
+    """
+    import json
+
+    pdb_id = pdb_id.lower()
+    jdir = os.path.join(cache_dir, "json")
+    os.makedirs(jdir, exist_ok=True)
+    path = os.path.join(jdir, f"{pdb_id}-a{assembly}.pisa.json.gz")
+    if os.path.exists(path):
+        with gzip.open(path, "rt") as fh:
+            return json.load(fh)
+    url = PDBE_PISA_JSON_URL.format(pdbid=pdb_id, assembly=assembly)
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    doc = data.get(pdb_id)
+    if not doc or "assembly" not in doc:
+        raise RuntimeError(f"PDBe PISA JSON has no assembly doc for {pdb_id}")
+    with gzip.open(path, "wt") as fh:
+        json.dump(doc, fh)
+    return doc
+
+
+def fetch_assembly_cif(pdb_id: str, assembly: str = "1",
+                       cache_dir: str = REFERENCE_DIR,
+                       timeout: int = 300) -> str:
+    """Download the biological-assembly mmCIF from RCSB (cached).
+
+    These files can be large, so the cache directory
+    (``tests/data/reference/assemblies``) is gitignored -- refetch on demand.
+    """
+    pdb_id = pdb_id.lower()
+    adir = os.path.join(cache_dir, "assemblies")
+    os.makedirs(adir, exist_ok=True)
+    path = os.path.join(adir, f"{pdb_id}-assembly{assembly}.cif.gz")
+    if os.path.exists(path):
+        return path
+    url = RCSB_ASSEMBLY_URL.format(pdbid=pdb_id.upper(), assembly=assembly)
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        data = resp.read()
+    with open(path, "wb") as fh:
+        fh.write(data)
+    return path
+
+
+def normalize_json_interfaces(doc: dict) -> List[dict]:
+    """PDBe PISA JSON interfaces -> the dict shape parse_pisa_xml produces."""
+    out = []
+    for i in doc["assembly"]["interfaces"]:
+        out.append({
+            "id": int(i["interface_id"]),
+            "int_area": i.get("interface_area"),
+            "int_solv_en": i.get("solvation_energy"),
+            "stab_en": i.get("stabilization_energy"),
+            "pvalue": i.get("p_value"),
+            "css": i.get("css"),  # absent in the JSON API -> None
+            "n_h_bonds": i.get("number_hydrogen_bonds", 0),
+            "n_salt_bridges": i.get("number_salt_bridges", 0),
+            "n_ss_bonds": i.get("number_disulfide_bonds", 0),
+            "molecules": [
+                {"chain_id": m.get("chain_id", ""), "class": m.get("molecule_class", ""),
+                 "symop": "x,y,z"}
+                for m in i.get("molecules", [])
+            ],
+        })
+    return out

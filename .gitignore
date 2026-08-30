@@ -33,4 +33,4 @@ out/
 .DS_Store
 
 # Testing / notebooks
-.ipynb_checkpoints/
+.ipynb_checkpoints/tests/data/reference/assemblies/

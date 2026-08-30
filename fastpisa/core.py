@@ -75,10 +75,19 @@ def run_core(
     min_css: float = 0.0,
     mode: str = "combined",
     interaction_cutoff: float = 5.0,
+    ligand_mode: str = "separate",
 ) -> CoreState:
-    """Run the shared analysis once and return the populated interfaces."""
+    """Run the shared analysis once and return the populated interfaces.
+
+    ``ligand_mode``: ``"separate"`` (classic PISA -- every bound hetero group
+    is its own monomer) or ``"merge"`` (jsPISA-on-assembly convention -- a
+    chain's bound ligands/cofactors belong to that chain's molecule).
+    """
     if mode not in MODES:
         raise ValueError(f"Unknown mode: {mode!r} (expected one of {MODES})")
+    if ligand_mode not in ("separate", "merge"):
+        raise ValueError(
+            f"Unknown ligand_mode: {ligand_mode!r} (expected 'separate' or 'merge')")
     want_cocomaps = mode in ("cocomaps", "combined")
 
     # 1. Parse input file
@@ -94,7 +103,7 @@ def run_core(
     logger.info("Parsed %d atoms from %s", n_atoms, input_file)
 
     # 2. Molecules and masks (exclude ordered water from interface search)
-    molecules = get_molecules(structure)
+    molecules = get_molecules(structure, merge_ligands=(ligand_mode == "merge"))
     molecules = filter_water_molecules(molecules, exclude_water=exclude_water)
     masks = get_molecule_masks(atoms, molecules)
     n_molecules = len(molecules)
@@ -451,6 +460,7 @@ def analyze(
     min_css: float = 0.0,
     mode: str = "combined",
     interaction_cutoff: float = 5.0,
+    ligand_mode: str = "separate",
 ) -> dict:
     """One-call analysis: run the core in the given mode and build the JSON."""
     state = run_core(
@@ -462,6 +472,7 @@ def analyze(
         min_css=min_css,
         mode=mode,
         interaction_cutoff=interaction_cutoff,
+        ligand_mode=ligand_mode,
     )
     return build_documents(state, pdb_id=pdb_id, assembly_id=assembly_id)
 

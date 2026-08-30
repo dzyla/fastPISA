@@ -28,6 +28,13 @@ def main():
                          "the reference cache before comparing")
     ap.add_argument("--entries", nargs="*", default=None, metavar="PDBID",
                     help="restrict the comparison to these entries")
+    ap.add_argument("--assembly-entries", nargs="*", default=None,
+                    metavar="PDBID",
+                    help="compare these entries via the modern PDBe PISA JSON "
+                         "API (biological assembly 1; covers recent entries "
+                         "the classic reference set cannot; needs network on "
+                         "first use). fastPISA runs on the same assembly "
+                         "coordinates with --ligand-mode merge semantics.")
     ap.add_argument("--mode", default="pisa",
                     choices=["pisa", "cocomaps", "combined"])
     ap.add_argument("--json", default=None, metavar="PATH",
@@ -46,7 +53,18 @@ def main():
     if args.entries:
         ids = [p.lower() for p in args.entries]
 
-    res = compare_entries(ids, mode=args.mode)
+    if args.assembly_entries:
+        from fastpisa.reference.compare import compare_assembly_entry
+        entries = []
+        for pid in args.assembly_entries:
+            try:
+                entries.append(compare_assembly_entry(pid.lower(), mode=args.mode))
+            except Exception as exc:
+                print(f"{pid}: skipped ({exc})", file=sys.stderr)
+        res = {"entries": entries,
+               "rows": [r for e in entries for r in e["rows"]]}
+    else:
+        res = compare_entries(ids, mode=args.mode)
     rows = res["rows"]
 
     hdr = (f"{'pdb':6} {'interface':24} {'area fp/ref':>16} {'dG fp/ref':>16} "

@@ -86,6 +86,14 @@ def main():
         help="Include ordered water in interface search",
     )
     parser.add_argument(
+        "--ligand-mode", dest="ligand_mode", choices=["separate", "merge"],
+        default="separate",
+        help="'separate' (default): each bound hetero group is its own "
+             "monomer (classic PISA). 'merge': a chain's bound ligands/"
+             "cofactors belong to that chain's molecule (jsPISA assembly "
+             "convention).",
+    )
+    parser.add_argument(
         "--min_css", type=float, default=0.0,
         help="Only keep interfaces with CSS >= this significance score "
              "(default 0.0 = keep all). Use e.g. 0.5 to drop weak/"
@@ -186,6 +194,7 @@ def main():
         mode=args.mode,
         exclude_water=args.exclude_water,
         min_css=args.min_css,
+        ligand_mode=args.ligand_mode,
     )
 
     t0 = time.monotonic()

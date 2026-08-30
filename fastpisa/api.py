@@ -60,6 +60,10 @@ class PISAInterfaceAnalyzer:
     min_css : float
         Minimum CSS score for an interface to be kept (significance filter).
         ``0.0`` (default) keeps every detected interface.
+    ligand_mode : str
+        ``"separate"`` (default; classic PISA -- each bound hetero group is
+        its own monomer) or ``"merge"`` (a chain's bound ligands/cofactors
+        belong to that chain's molecule, the jsPISA-on-assembly convention).
 
     Attributes
     ----------
@@ -83,6 +87,7 @@ class PISAInterfaceAnalyzer:
         mode: str = "combined",
         exclude_water: bool = True,
         min_css: float = 0.0,
+        ligand_mode: str = "separate",
     ):
         self.path = Path(path)
         if not self.path.exists():
@@ -95,6 +100,7 @@ class PISAInterfaceAnalyzer:
         self.mode = mode
         self.exclude_water = exclude_water
         self.min_css = min_css
+        self.ligand_mode = ligand_mode
 
         # Populated by analyze()
         self.interfaces: List[Interface] = []
@@ -132,6 +138,7 @@ class PISAInterfaceAnalyzer:
             interface_cutoff=self.interface_cutoff,
             exclude_water=self.exclude_water,
             min_css=self.min_css,
+            ligand_mode=self.ligand_mode,
         )
         if self.mode not in MODES:
             raise ValueError(

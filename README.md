@@ -31,9 +31,15 @@ hemoglobin, protein–DNA/RNA, glycans, cofactors, ions; reproduce with
 | Disulfides | 100% exact | — |
 
 \* the cryo-EM / AlphaFold-model regime (protein/nucleic-acid chain pairs, no
-small-molecule ligand side). Verified out-of-sample: on 15 entries the fit
-had never seen, polymer–polymer ΔG agreed at Pearson 0.977 before those
-entries were folded into the calibration.
+small-molecule ligand side). Verified out-of-sample twice: on 15 classic
+entries the fit had never seen (polymer–polymer ΔG Pearson 0.977), and on
+**20 recent (2023–2024) depositions** compared blind against the modern PDBe
+PISA 2.0 JSON API on biological-assembly coordinates — 87 interfaces, ΔG
+Pearson **0.978**, stab **0.986**, area 3.0% median, P-value error 0.11
+(`python examples/compare_vs_pisa.py --assembly-entries <ids>`). H-bond
+counts differ more vs PISA *2.0* (64% within ±1) than vs classic PISA (91%)
+— the two PISA versions themselves disagree on H-bond criteria; fastPISA is
+calibrated to the classic engine.
 
 ---
 
@@ -73,6 +79,7 @@ Common options:
 | `--pdb_id` | PDB id used in output filenames |
 | `--probe_radius`, `--point_density`, `--interface_cutoff` | Core geometry knobs |
 | `--no-water` / `--with-water` | Exclude (default) or include ordered water in the interface search |
+| `--ligand-mode {separate,merge}` | `separate` (default): each bound hetero group is its own monomer, classic PISA. `merge`: a chain's ligands/cofactors count toward that chain's interfaces (jsPISA assembly convention) |
 | `--time` | Print wall-clock analysis time |
 | `--json-summary` | Print a compact JSON summary instead of the text report |
 | `-o`, `--output_dir` | Where to write the two JSON documents |
