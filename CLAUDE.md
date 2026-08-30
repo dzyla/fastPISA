@@ -30,10 +30,24 @@ ana.summary(), ana.write_json("out/")
 
 ## Commands you'll most often run
 
-- `pytest tests/ -q` — full suite incl. the offline accuracy regression vs
-  original PISA (`tests/test_vs_pdbe_pisa.py`, cached EBI reference data)
+- `pytest tests/ -q` — full suite incl. the offline accuracy regressions vs
+  original PISA (`tests/test_vs_pdbe_pisa.py`) and vs COCOMAPS 2.0
+  (`tests/test_vs_cocomaps2.py`), both from cached reference data
 - `python examples/compare_vs_pisa.py` — head-to-head vs original PISA
-  (add entries with `--fetch <pdbid>`; needs network only for fetching)
+  (add entries with `--fetch <pdbid>`; `--assembly-entries <ids>` compares
+  recent entries via the PDBe PISA 2.0 JSON API; network only for fetching)
+
+## Validation status (2026-08-30; don't regress these)
+
+- vs original PISA (262 identity interfaces, 36 entries): area 2.2% median
+  (1.3% >300 A^2); dG r 0.956; stab r 0.977; H-bonds 91% within +-1; salt
+  0.08 mean diff; disulfides exact. Polymer-polymer subset (cryo-EM regime,
+  n=153): area 1.5%, dG r 0.980, stab r 0.988. Blind on 20 recent (2023-24)
+  assemblies: dG r 0.978, stab 0.986.
+- vs COCOMAPS 2.0 standalone (same inputs, REDUCE hydrogens): contact maps
+  IDENTICAL (1ktz 30/30, 1vfb 28/28, 1aay protein-DNA 57/57 residue pairs;
+  interface residue sets identical); COCOMAPS-convention salt bridges match
+  per residue pair.
 
 ## Architecture in one line
 
@@ -56,6 +70,16 @@ are thin wrappers.
   bridge and H-bond — PISA lists it in both tables). Counting lives in
   `interface/bonds.py` (geometric H-bonds: 3.89 A + antecedent angles +
   capacities; explicit-H criteria when the model has hydrogens).
+- **Two salt-bridge conventions on purpose**: PISA-schema `number_salt_bridges`
+  uses PISA's rule (`interface/bonds.py`, no phosphates, 4.0 A); the COCOMAPS
+  contact-map classes use COCOMAPS 2.0's rule (Lys/Arg vs carboxylate or DNA
+  phosphate, 4.5 A) in `cocomaps/interactions.py`. Don't "unify" them.
+- **Pi classes need ring geometry** (`cocomaps/rings.py` centroids/normals);
+  proximity-only rules over-count CH-pi ~20x. Contact-map vdW classes require
+  r1+r2+0.5 A; farther pairs inside 5 A are "proximal" (COCOMAPS vocabulary).
+- **`ligand_mode`**: `"separate"` (default, classic PISA: each hetero group
+  its own monomer) vs `"merge"` (jsPISA-on-assembly: a chain's cofactors
+  belong to the chain).
 - **Hydrogens carry no surface**: masks are heavy-atom-only; H atoms stay in
   the parsed list for H-bond geometry.
 - **Molecules by residue composition, not `chain.group`.** The parser flag is
@@ -83,5 +107,10 @@ python examples/compare_vs_pisa.py        # accuracy table vs original PISA
   (fetch/parse via `fastpisa/reference/`); optional CCP4-binary tests are
   enabled via FASTPISA_PISA_BIN / FASTPISA_EXTERNAL_MODELS_GLOB /
   FASTPISA_EXTERNAL_CIF (skip when unset).
-- COCOMAPS 2.0: Chawla et al., Bioinformatics (2025), PMC12684709.
+- COCOMAPS 2.0: Chawla et al., Bioinformatics (2025), PMC12684709; standalone
+  code Zenodo 10.5281/zenodo.17390665 (reference outputs cached in
+  tests/data/reference/cocomaps2/). Its HBPLUS/NACCESS steps are
+  license-walled — H-bond deliverables are validated against PISA instead.
+- PDBe PISA 2.0 JSON API (recent entries, biological assemblies):
+  `https://www.ebi.ac.uk/pdbe/api/pisa/interfaces/{pdbid}/{assembly}`.
 - Design spec: docs/superpowers/specs/2026-08-29-pisa-parity-combined-mode-design.md

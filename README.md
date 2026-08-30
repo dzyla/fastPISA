@@ -319,7 +319,40 @@ and `--hotspots N` prints the top-N buried residues. The matplotlib heatmap need
 
 ---
 
+## What's new in 0.3.0
+
+- **One shared analysis core** (`fastpisa/core.py`): all modes run the same
+  physics once; `combined` mode (new default) delivers PISA thermodynamics
+  *and* the COCOMAPS contact map in a single report.
+- **Numerical parity with original PISA**: PISA interface semantics
+  (buried-area-based detection), pair-specific buried surfaces, heavy-atom
+  surfaces, geometric H-bond detection, ASP table + P-value + CSS calibrated
+  against the EBI PISA engine (262 interfaces, 36 entries), PISA's per-bond
+  energy constants recovered exactly (−0.444/−0.150/−4.0 kcal/mol).
+- **COCOMAPS 2.0-faithful contact maps**: identical residue-pair maps
+  (validated against the actual COCOMAPS 2.0 tool), ring-geometry-validated
+  π classes, COCOMAPS conventions for salt bridges (incl. DNA phosphates),
+  vdW/proximal/clash classes, full per-pair class breakdowns.
+- **Faster**: local-delta per-pair surfaces, vectorised masks; GroEL/GroES
+  (58k atoms, 70 interfaces) in ~7 s with FreeSASA.
+- New: `ligand_mode="merge"`, `.pdb.gz` input, PDBe PISA 2.0 assembly
+  comparison (`--assembly-entries`), offline accuracy regression tests, CI.
+
 ## Validation & benchmark vs original PISA
+
+**Ground truths used** (all comparisons reproducible from this repo):
+
+1. **Classic EBI PISA engine** — XML from
+   `https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/interfaces.pisa?<id>`; 36 entries
+   cached in `tests/data/reference/` (identity/ASU interfaces only). Drives
+   the calibration and `tests/test_vs_pdbe_pisa.py`.
+2. **PDBe PISA 2.0 JSON API** (biological assemblies; covers recent
+   entries) — blind test on 20 depositions from 2023–2024, fastPISA run on
+   the same assembly coordinates.
+3. **COCOMAPS 2.0 standalone code** (Zenodo `10.5281/zenodo.17390665`) run
+   locally on the same inputs; its residue-pair tables are cached in
+   `tests/data/reference/cocomaps2/` and pinned by
+   `tests/test_vs_cocomaps2.py`.
 
 Accuracy: `python examples/compare_vs_pisa.py` runs the full head-to-head
 against the original PISA engine (EBI PDBe PISA service; XML + PDB files
@@ -356,6 +389,7 @@ fastpisa/
 ├── batch.py               # parallel batch analysis (analyze_many)
 ├── cocomaps/              # COCOMAPS 2.0 mode
 │   ├── interactions.py    # atomic interaction-type classifier
+│   ├── rings.py           # ring centroids/normals for pi-class geometry
 │   ├── contact_map.py     # residue-residue contact map + matrix
 │   └── pipeline.py        # COCOMAPS-mode entry point (thin wrapper over core)
 ├── interface/

@@ -54,10 +54,18 @@ unified report per interface (PISA thermodynamics + COCOMAPS contact map).
 ## Tests / verification
 
 ```bash
-pytest tests/ -q                    # includes offline accuracy regression vs
-                                    # original PISA (cached EBI reference data)
+pytest tests/ -q                    # includes offline accuracy regressions vs
+                                    # original PISA and vs COCOMAPS 2.0
+                                    # (cached reference data)
 python examples/compare_vs_pisa.py  # human-readable accuracy table
 ```
+
+Contact-map identity with COCOMAPS 2.0 (and its class conventions: vdW
+tolerance, proximal, ring-geometry pi classes, phosphate-aware salt bridges)
+is pinned by `tests/test_vs_cocomaps2.py` against reference outputs in
+`tests/data/reference/cocomaps2/`. Note the deliberate dual salt-bridge
+conventions: PISA-schema counts use PISA's rule; contact-map classes use
+COCOMAPS 2.0's.
 
 `tests/data/1ktz.pdb` (chains A/B) is the canonical small test case. The EBI
 reference cache lives in `tests/data/reference/` (21 entries; extend with
