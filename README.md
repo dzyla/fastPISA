@@ -14,20 +14,26 @@ same interfaces** for a structure.
 | `pisa` | Thermo/surface analysis: ASA/BSA, interface areas, ΔG, P-value, CSS, H-bonds / salt bridges / disulfides | PDBe PISA `assembly.json` + `interfaces.json` |
 | `cocomaps` | Residue–residue contact map with atomic interaction-type classification (H-bond, salt bridge, pi-pi, cation-pi, ch-pi, …) | Superset of the PISA schema + `interface_contact_map` per interface |
 
-**Validated against original PISA** (EBI PDBe PISA service, 117 identity
-interfaces from 21 diverse PDB entries; reproduce with
+**Validated against original PISA** (EBI PDBe PISA service, 262 identity
+interfaces from 36 diverse PDB entries — proteases, antibodies, receptors,
+hemoglobin, protein–DNA/RNA, glycans, cofactors, ions; reproduce with
 `python examples/compare_vs_pisa.py`):
 
-| Quantity | Agreement with original PISA |
-|---|---|
-| Interface area | median rel. error 1.5% (1.3% for interfaces > 300 Å²) |
-| Solvation ΔG | Pearson 0.950, median error 0.94 kcal/mol |
-| Stabilization energy | Pearson 0.973 (per-bond constants recovered exactly) |
-| P-value | median error 0.125, Spearman 0.70 |
-| CSS | Spearman 0.80 (calibrated surrogate) |
-| H-bond counts | 89% within ±1 |
-| Salt bridges | mean diff 0.13 per interface |
-| Disulfides | 100% exact |
+| Quantity | All interfaces (n=262) | Polymer–polymer only (n=153)* |
+|---|---|---|
+| Interface area | median rel. error 2.2% (1.3% > 300 Å²) | 1.5% |
+| Solvation ΔG | Pearson 0.956, median error 1.05 kcal/mol | **Pearson 0.980** |
+| Stabilization energy | Pearson 0.977 (per-bond constants recovered exactly) | **Pearson 0.988** |
+| P-value | median error 0.12 | Spearman 0.72 |
+| CSS | Spearman 0.71 (calibrated surrogate) | Spearman 0.75 |
+| H-bond counts | 91% within ±1 | — |
+| Salt bridges | mean diff 0.08 per interface | — |
+| Disulfides | 100% exact | — |
+
+\* the cryo-EM / AlphaFold-model regime (protein/nucleic-acid chain pairs, no
+small-molecule ligand side). Verified out-of-sample: on 15 entries the fit
+had never seen, polymer–polymer ΔG agreed at Pearson 0.977 before those
+entries were folded into the calibration.
 
 ---
 
@@ -160,7 +166,7 @@ Top 5 hotspot residues (by buried area):
 
 For 1ktz's A–B interface original PISA reports area 493.4 Å², ΔG −4.3
 kcal/mol, P-value 0.50, 9 H-bonds, 8 salt bridges; fastPISA gives 483.5 Å²,
-−3.1 kcal/mol, P-value 0.51, 9 H-bonds, 8 salt bridges on the same input.
+−3.3 kcal/mol, P-value 0.52, 9 H-bonds, 8 salt bridges on the same input.
 
 Python — introspect the interfaces and write visualizations in one go:
 
@@ -302,7 +308,7 @@ agreement table shown at the top of this README. The same numbers are pinned
 as a regression test in `tests/test_vs_pdbe_pisa.py`. `--fetch <pdbid> ...`
 extends the benchmark with new entries (network required once).
 
-Speed (with the FreeSASA C backend): the 21-entry benchmark runs in ~7 s
+Speed (with the FreeSASA C backend): the original 21-entry benchmark runs in ~7 s
 total; GroEL/GroES (1aon: 58k atoms, 21 chains, 70 interfaces) takes 7.4 s in
 combined mode. fastPISA is ~3–4x faster than the original CCP4 binary on
 comparable inputs and ~15x faster than its own pure-Python fallback. Per-pair

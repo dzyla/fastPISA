@@ -17,10 +17,13 @@ from fastpisa.reference.ebi_pisa import (
 
 #: Entries shipped in tests/data/reference. 1ppf is cached too but its
 #: glycan chains were renamed by the wwPDB carbohydrate remediation after
-#: PISA's run, so its sugar interfaces cannot be matched by name.
+#: PISA's run, so its sugar interfaces cannot be matched by name (the same
+#: renaming affects a handful of glycan/ion pairs in 1nca/1gpw/1prc).
 BENCHMARK_ENTRIES = (
     "1ktz 1brs 1vfb 2ptc 1acb 3hhr 4ins 1a3n 1fin 1lmb 1dfj 1ay7 1gcq "
-    "1tro 3cro 1rva 9ant 2sni 1cho 1stf 1cbw"
+    "1tro 3cro 1rva 9ant 2sni 1cho 1stf 1cbw "
+    "1fdl 3hfm 1nca 1cgi 1eaw 1r0r 1oph 1jck 1gpw 1tsr 1aay 1urn 1prc "
+    "1f34 1e6e"
 ).split()
 
 
@@ -117,4 +120,21 @@ def summarize(rows: List[dict]) -> Dict[str, float]:
         "sb_mean_abs_diff": float(np.mean(np.abs(g("nsb_fp") - g("nsb_ref")))),
         "ss_exact": float(np.mean(g("nss_fp") == g("nss_ref"))),
     }
+
+    # Polymer-polymer subset (no ligand molecule on either side): the
+    # cryo-EM / predicted-model use case, and the best-calibrated regime.
+    poly = [r for r in rows if "[" not in r["pair"]]
+    if poly:
+        gp = lambda f: np.array([r[f] for r in poly], dtype=float)  # noqa: E731
+        rel_p = np.abs(gp("area_fp") - gp("area_ref")) / np.maximum(gp("area_ref"), 1.0)
+        stats.update({
+            "poly_n": len(poly),
+            "poly_area_median_rel_err": float(np.median(rel_p)),
+            "poly_dg_pearson": _pearson(gp("dg_fp"), gp("dg_ref")),
+            "poly_dg_median_abs_err": float(np.median(np.abs(gp("dg_fp") - gp("dg_ref")))),
+            "poly_stab_pearson": _pearson(gp("stab_fp"), gp("stab_ref")),
+            "poly_pv_median_abs_err": float(np.median(np.abs(gp("pv_fp") - gp("pv_ref")))),
+            "poly_pv_spearman": _spearman(gp("pv_fp"), gp("pv_ref")),
+            "poly_css_spearman": _spearman(gp("css_fp"), gp("css_ref")),
+        })
     return stats

@@ -88,6 +88,16 @@ def main():
           f"{s['hb_within_1']*100:.0f}% within +-1")
     print(f"salt bridges   : mean |diff| {s['sb_mean_abs_diff']:.2f}")
     print(f"disulfides     : {s['ss_exact']*100:.0f}% exact")
+    if "poly_n" in s:
+        print(f"\n--- polymer-polymer interfaces only (n={s['poly_n']}; "
+              f"the cryo-EM / predicted-model regime) ---")
+        print(f"area {s['poly_area_median_rel_err']*100:.1f}% | "
+              f"dG r {s['poly_dg_pearson']:.3f} "
+              f"(med |err| {s['poly_dg_median_abs_err']:.2f} kcal/mol) | "
+              f"stab r {s['poly_stab_pearson']:.3f} | "
+              f"P-value |err| {s['poly_pv_median_abs_err']:.3f} "
+              f"(Spearman {s['poly_pv_spearman']:.3f}) | "
+              f"CSS Spearman {s['poly_css_spearman']:.3f}")
 
     if args.json:
         with open(args.json, "w") as fh:

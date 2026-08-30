@@ -65,15 +65,18 @@ def calculate_p_value_pisa(
     # The independent-atom variance underestimates the true patch variance
     # (buried areas are correlated within residues), which over-spreads z.
     # A single deflation constant fitted against EBI PISA p-values over the
-    # 21-entry benchmark (stable under leave-one-PDB-out: median |p error|
-    # 0.12, Pearson 0.67) corrects for it.
+    # polymer-polymer interfaces of the 36-entry benchmark corrects for it
+    # (median |p error| 0.11, Spearman 0.73 on those interfaces). PISA's
+    # p-values for small-ligand/ion interfaces follow different statistics
+    # and are NOT reproduced by this model -- treat ligand-interface
+    # p-values as indicative only.
     z *= P_VALUE_Z_SCALE
     p = float(0.5 * (1 + erf(z / np.sqrt(2))))
     return min(max(p, 0.0), 1.0)
 
 
 # Effective-z deflation for correlated buried patches (see above).
-P_VALUE_Z_SCALE = 0.29
+P_VALUE_Z_SCALE = 0.219
 
 
 def calculate_css_pisa(solvation_energy: float, interface_area: float) -> float:
@@ -81,19 +84,19 @@ def calculate_css_pisa(solvation_energy: float, interface_area: float) -> float:
 
     PISA's true CSS comes from its crystal-wide assembly analysis (which
     needs symmetry-mate enumeration -- out of fastPISA's scope). This
-    logistic surrogate was fitted to EBI PISA CSS values over the 21-entry
-    reference benchmark:
+    logistic surrogate was fitted to EBI PISA CSS values over the 36-entry
+    reference benchmark (262 interfaces):
 
-        css = sigmoid(-3.1669 - 0.4927 * dG_solv + 0.0242 * ln(1 + area))
+        css = sigmoid(-6.9088 - 0.1699 * dG_solv + 0.8485 * ln(1 + area))
 
-    Leave-one-PDB-out performance: Spearman 0.73 vs PISA's CSS, mean
-    absolute error 0.23, and 80% agreement on the css >= 0.5
+    Leave-one-PDB-out performance: Spearman 0.68 vs PISA's CSS, mean
+    absolute error 0.22, and 79% agreement on the css >= 0.5
     biological-vs-packing call. Treat it as a well-behaved [0, 1]
     significance score, not an exact reproduction.
     """
-    x = (-3.1669
-         - 0.4927 * solvation_energy
-         + 0.0242 * np.log1p(max(interface_area, 0.0)))
+    x = (-6.9088
+         - 0.1699 * solvation_energy
+         + 0.8485 * np.log1p(max(interface_area, 0.0)))
     return float(1.0 / (1.0 + np.exp(-x)))
 
 

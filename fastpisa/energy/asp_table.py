@@ -8,52 +8,66 @@ where BSA_k is the pair-specific buried area of atom k (isolated-monomer ASA
 minus in-pair ASA, heavy atoms only) and sigma is the per-class parameter
 below. Negative dG_solv = favourable, matching PISA's ``int_solv_en``.
 
-CALIBRATION (2026-08-29). sigma was fitted by least squares to the original
-PISA engine's ``int_solv_en`` (EBI PDBe PISA service XML) over 117 matched
-identity interfaces from 21 diverse PDB entries (protease-inhibitor,
-antibody-antigen, hormone-receptor, hemoglobin+heme, protein-DNA, insulin
-with inter-chain disulfides and Zn, ATP/ion/glycan ligand interfaces):
+CALIBRATION (2026-08-29, extended set). sigma was fitted by least squares to
+the original PISA engine's ``int_solv_en`` (EBI PDBe PISA service XML) over
+262 matched identity interfaces from 36 diverse PDB entries
+(protease-inhibitor, antibody-antigen, hormone-receptor, hemoglobin+heme,
+protein-DNA/RNA, insulin with inter-chain disulfides and Zn, ATP / inorganic
+ion / glycan / cofactor ligand interfaces):
 1ktz 1brs 1vfb 2ptc 1acb 3hhr 4ins 1a3n 1fin 1lmb 1dfj 1ay7 1gcq 1tro 3cro
-1rva 9ant 2sni 1cho 1stf 1cbw.
+1rva 9ant 2sni 1cho 1stf 1cbw 1fdl 3hfm 1nca 1cgi 1eaw 1r0r 1oph 1jck 1gpw
+1tsr 1aay 1urn 1prc 1f34 1e6e.
 
 Performance (leave-one-PDB-out cross-validation, i.e. on entries the fit
-never saw): Pearson r = 0.94 overall, r = 0.97 for interfaces > 300 A^2,
-median |error| 1.16 kcal/mol (14% relative) on those interfaces. Small
-single-ion interfaces (a lone Zn/Ca/Ni) carry the largest relative errors:
-PISA gives ions large, ion-specific desolvation penalties that a single MET
-class only approximates.
+never saw): Pearson r = 0.92 overall; polymer-polymer interfaces (the
+cryo-EM / predicted-model use case) r = 0.974, median |error| 1.35 kcal/mol;
+ligand-involving interfaces r = 0.74. Before the 15-entry blind-test
+extension the polymer-polymer figure was verified truly out-of-sample at
+r = 0.977. Largest residual errors: exotic hydrophobic cofactors
+(quinones/pheophytins), where PISA applies CCD-specific chemistry.
 
 The fitted values are physically sensible and close to classic
 Eisenberg-McLachlan scales: burying carbon/sulfur is favourable
-(sigma_C = -17 cal/mol/A^2), burying charged nitrogen/oxygen costs energy.
+(sigma_C = -14 cal/mol/A^2), burying charged nitrogen/oxygen costs energy,
+and inorganic anion oxygens / metal cations carry large desolvation
+penalties.
 
-Reproduce / refresh with ``python examples/compare_vs_pisa.py --recalibrate``.
+Reproduce / refresh with ``python examples/compare_vs_pisa.py``.
 """
 
 from typing import Optional
 
-# Metal elements treated as the MET desolvation class.
+# Metal elements (ZN has its own fitted class; the rest share MET).
 METAL_ELEMENTS = frozenset({
-    "FE", "ZN", "MG", "CA", "CU", "MN", "NI", "CO", "MO", "W", "CD", "HG",
+    "FE", "MG", "CA", "CU", "MN", "NI", "CO", "MO", "W", "CD", "HG",
     "NA", "K", "LI", "SR", "BA", "RB", "CS",
 })
 
-# Phosphate / acid ester oxygens (nucleic-acid backbone, ATP-like, sulfate).
+# Phosphate / acid ester oxygens (nucleic-acid backbone, ATP-like).
 PHOSPHATE_OXYGENS = frozenset({
     "OP1", "OP2", "OP3", "O1P", "O2P", "O3P",
     "O1A", "O2A", "O3A", "O1B", "O2B", "O3B", "O1G", "O2G", "O3G",
 })
 
+# Small inorganic / organic acid ion ligands whose oxygens carry the large
+# ion-desolvation penalty PISA assigns them (validated on SO4/PO4 cases).
+ION_RESIDUES = frozenset({
+    "SO4", "PO4", "PO3", "VO4", "WO4", "NO3", "CO3", "ACT", "FMT", "OXL",
+    "CIT",
+})
+
 # sigma per atom class, kcal mol^-1 A^-2 (see calibration note above).
 SIGMA = {
-    "C":   -0.01711,   # carbon (hydrophobic burial favourable)
-    "N":   -0.01336,   # neutral nitrogen
-    "N+":   0.02151,   # charged side-chain N (Arg NE/NH*, Lys NZ, His ND1/NE2)
-    "O":    0.01206,   # neutral oxygen
-    "O-":   0.02314,   # carboxylate O (Asp/Glu)
-    "OP":  -0.01455,   # phosphate / acid-ester O (DNA backbone, ATP, SO4)
-    "S":   -0.03326,   # sulfur / selenium
-    "MET": -0.13820,   # metal ions (single-class approximation)
+    "C":   -0.01360,   # carbon (hydrophobic burial favourable)
+    "N":   -0.01062,   # neutral nitrogen
+    "N+":   0.01432,   # charged side-chain N (Arg NE/NH*, Lys NZ, His ND1/NE2)
+    "O":    0.00673,   # neutral oxygen
+    "O-":   0.01744,   # carboxylate O (Asp/Glu)
+    "OP":  -0.01017,   # phosphate / acid-ester O (DNA backbone, ATP)
+    "OI":  -0.10438,   # inorganic ion O (SO4, PO4, ...)
+    "S":   -0.04276,   # sulfur / selenium
+    "MET": -0.09959,   # metal ions other than Zn
+    "ZN":  -0.36134,   # zinc (strongly desolvating in PISA)
     "X":    0.0,       # anything else (P, halogens, ...): no contribution
 }
 
@@ -65,8 +79,12 @@ def atom_class(atom_name: str, element: str, res_name: str = "") -> str:
     el = element.strip().upper()
     res = res_name.strip().upper()
     name = atom_name.strip().upper()
+    if el == "ZN":
+        return "ZN"
     if el in METAL_ELEMENTS:
         return "MET"
+    if res in ION_RESIDUES and el == "O":
+        return "OI"
     if el == "C":
         return "C"
     if el in ("S", "SE"):
@@ -76,7 +94,7 @@ def atom_class(atom_name: str, element: str, res_name: str = "") -> str:
     if el == "O":
         if SALT_CHARGES.get((res, name), 0) < 0:
             return "O-"
-        if name in PHOSPHATE_OXYGENS or (res == "SO4" and name in ("O1", "O2", "O3", "O4")):
+        if name in PHOSPHATE_OXYGENS:
             return "OP"
         return "O"
     return "X"
