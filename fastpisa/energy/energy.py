@@ -131,11 +131,15 @@ def calculate_entropy(
     """Calculate the entropy change (TΔS) for interface formation.
 
     PISA estimates the entropy of immobilisation of surface side chains
-    and the entropy change due to loss of translational/rotational
-    freedom upon assembly.
+    and the entropy change due to loss of translational, rotational, and
+    vibrational freedom upon assembly.
 
-    The entropy term is estimated from the buried surface area
-    and the number of residues involved.
+    Ideally, these components map to subunit mass, surface area, symmetry 
+    numbers, and moments of inertia to calculate the free energy of 
+    dissociation effectively. In this fast Python port, the entropy term 
+    is estimated as a linear proxy from the buried surface area
+    and the number of residues involved, rather than a full rigid-body 
+    statistical mechanical computation.
 
     Parameters
     ----------

@@ -451,6 +451,41 @@ class PISAInterfaceAnalyzer:
         self.interfaces = kept
         return kept
 
+    def weight_energies_by_confidence(self, pae_threshold: float = 10.0, plddt_threshold: float = 50.0) -> None:
+        """Weight physical interaction energies and CSS based on prediction confidence.
+
+        For low-confidence interfaces (high PAE or low pLDDT), stabilization and
+        solvation energies, as well as the CSS score, are scaled down. This avoids
+        overestimating the stability of domains that are not confidently predicted.
+        """
+        from fastpisa.pae import interface_pae_score, interface_plddt
+        self.analyze()
+        atoms = self._parsed_atoms()
+
+        for i in self.interfaces:
+            weight = 1.0
+
+            # Prioritize PAE if available (lower is better, typically 0-30 A)
+            if self.pae_data is not None and self.pae_data.has_pae:
+                pae = interface_pae_score(i, atoms, self._pae_map, self.pae_data)
+                if pae is not None:
+                    # e.g., if pae is > threshold, weight drops linearly to 0.1 at threshold*2
+                    if pae > pae_threshold:
+                        weight = max(0.1, 1.0 - ((pae - pae_threshold) / pae_threshold))
+            
+            # Fallback to pLDDT if available (higher is better, typically 0-100)
+            elif self._plddt_map:
+                plddt = interface_plddt(i, atoms, self._plddt_map)
+                if plddt is not None:
+                    # e.g., if plddt < threshold, weight drops linearly
+                    if plddt < plddt_threshold:
+                        weight = max(0.1, plddt / plddt_threshold)
+
+            if weight < 1.0:
+                i.stabilization_energy = round(i.stabilization_energy * weight, 2)
+                i.solvation_energy = round(i.solvation_energy * weight, 2)
+                i.css = round(i.css * weight, 3)
+
     # -- visualisation helpers --------------------------------------------
     def write_pymol_script(self, out_path: str, by: str = "bsa") -> str:
         """Write a PyMOL ``.pml`` colouring the first interface's residues by

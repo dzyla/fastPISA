@@ -180,3 +180,4 @@ def test_casp17_matches_original_pisa(case, tmp_path):
             f"{case}: interface {pair} area mismatch: "
             f"fastPISA={o['area']:.1f} PISA={r['area']:.1f} ({rel*100:.1f}%)"
         )
+
