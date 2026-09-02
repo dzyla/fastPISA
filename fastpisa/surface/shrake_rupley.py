@@ -28,8 +28,68 @@ VDW_RADII = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Surface (ASA) radii: the NACCESS / Chothia (1976) set original PISA uses.
+#
+# Recovered empirically (2026-09-01) by fitting per-element radii to PISA's
+# per-residue isolated-monomer ASA over ~6000 interface residues: the fit
+# lands within 0.01-0.03 A of the published NACCESS values, and switching to
+# them drops the per-residue ASA error against PISA from 3.3% (median,
+# +1.3% bias; Bondi-like table above) to 0.9% with no bias. NACCESS's
+# convention is that trigonal (sp2) carbons -- carbonyl / carboxylate /
+# guanidinium / aromatic ring -- take 1.76 A and tetrahedral carbons 1.87 A.
+#
+# These are for SURFACE calculations only. The contact-classification radii
+# in VDW_RADII / get_vdw_radius (COCOMAPS-validated) are a different
+# convention and must stay as they are.
+# ---------------------------------------------------------------------------
+SURFACE_RADII = {
+    "C": 1.87, "N": 1.65, "O": 1.40, "S": 1.85, "P": 1.90, "SE": 1.90,
+    # Ions, recovered EXACTLY from PISA: a lone ion's isolated ASA is
+    # 4*pi*(r + 1.4)^2, and PISA's per-residue ASA for each monatomic ion is
+    # constant to 0.0% across the benchmark, so r = sqrt(ASA/4pi) - 1.4 to
+    # two decimals (2026-09-01, 674 entries). Note Ca at 1.20 A (PISA's own
+    # value, adopted as-is: "follow the same rules") and K at 2.75 A.
+    "MG": 1.39, "ZN": 1.39, "CA": 1.20, "NA": 1.75, "K": 2.75, "CL": 1.75,
+    "BR": 1.85, "I": 1.98, "MN": 1.73, "FE": 1.90, "CO": 1.90, "NI": 1.63,
+    "CU": 1.75, "CD": 1.58, "HG": 1.90, "GD": 2.75,
+}
+_SP2_CARBON = frozenset({"C"})  # backbone carbonyl C (every residue)
+_SP2_SIDECHAIN = frozenset({
+    ("ASP", "CG"), ("GLU", "CD"), ("ASN", "CG"), ("GLN", "CD"), ("ARG", "CZ"),
+    ("PHE", "CG"), ("PHE", "CD1"), ("PHE", "CD2"), ("PHE", "CE1"), ("PHE", "CE2"), ("PHE", "CZ"),
+    ("TYR", "CG"), ("TYR", "CD1"), ("TYR", "CD2"), ("TYR", "CE1"), ("TYR", "CE2"), ("TYR", "CZ"),
+    ("TRP", "CG"), ("TRP", "CD1"), ("TRP", "CD2"), ("TRP", "CE2"), ("TRP", "CE3"),
+    ("TRP", "CZ2"), ("TRP", "CZ3"), ("TRP", "CH2"),
+    ("HIS", "CG"), ("HIS", "CD2"), ("HIS", "CE1"),
+})
+_NUCLEOTIDES = frozenset({"A", "G", "C", "U", "DA", "DG", "DC", "DT", "DU",
+                          "RA", "RG", "RC", "RT", "RU"})
+SURFACE_RADIUS_SP2_C = 1.76
+
+
+def surface_radius(atom) -> float:
+    """Radius used for solvent-accessible-surface calculations (NACCESS set).
+
+    Falls back to :func:`get_vdw_radius` for elements outside the set
+    (metals, halogens), so hetero groups keep the radii they had.
+    """
+    el = atom.element.strip().upper()
+    if el == "C":
+        name = atom.atom_name.strip().upper()
+        res = atom.res_name.strip().upper()
+        if (name in _SP2_CARBON or (res, name) in _SP2_SIDECHAIN
+                or (res in _NUCLEOTIDES and not name.endswith("'"))):
+            return SURFACE_RADIUS_SP2_C
+        return SURFACE_RADII["C"]
+    r = SURFACE_RADII.get(el)
+    return r if r is not None else get_vdw_radius(el)
+
+
 def get_vdw_radius(element: str) -> float:
-    """Get the van der Waals radius for an element."""
+    """Van der Waals radius for CONTACT classification (COCOMAPS convention).
+
+    Not the surface radius -- see :func:`surface_radius`."""
     el = element.upper().strip()
     if el in VDW_RADII:
         return VDW_RADII[el]
@@ -46,7 +106,7 @@ def _prepare_atom_data(atoms) -> tuple:
     radii = np.zeros(n)
     for i, atom in enumerate(atoms):
         coords[i] = [atom.x, atom.y, atom.z]
-        radii[i] = get_vdw_radius(atom.element)
+        radii[i] = surface_radius(atom)
     return coords, radii
 
 

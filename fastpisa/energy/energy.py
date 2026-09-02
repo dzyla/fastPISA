@@ -53,6 +53,33 @@ def calculate_solvation_energy(
     return solv_energy
 
 
+def solvation_energy_components(
+    interface_atom_indices: set,
+    atom_bsa: dict,
+    atoms,
+) -> tuple:
+    """(apolar, polar) parts of the interface solvation gain (kcal/mol).
+
+    apolar = sum over carbon / sulfur atoms (the hydrophobic effect), polar =
+    everything else (N, O, ions). They sum to
+    :func:`calculate_solvation_energy` exactly.
+    """
+    from fastpisa.energy.asp_table import atom_class, is_apolar_class
+
+    apolar = polar = 0.0
+    for idx in interface_atom_indices:
+        atom = atoms[idx]
+        bsa = atom_bsa.get(idx, 0.0)
+        if not bsa:
+            continue
+        term = get_asp(atom.atom_name, atom.element, atom.res_name) * bsa
+        if is_apolar_class(atom_class(atom.atom_name, atom.element, atom.res_name)):
+            apolar += term
+        else:
+            polar += term
+    return apolar, polar
+
+
 # Per-bond free-energy contributions (kcal/mol), recovered EXACTLY from the
 # original PISA engine: regressing (stab_en - int_solv_en) on PISA's own
 # h-bond / salt-bridge / disulfide counts over 117 EBI reference interfaces

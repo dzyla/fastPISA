@@ -2,14 +2,31 @@
 
 Runs fully offline against the reference data cached in
 tests/data/reference/ (EBI PISA XML + RCSB PDB files for 36 entries,
-262 matched identity interfaces). These thresholds sit just under the
-accuracy measured at calibration time (2026-08-29):
+262 matched identity interfaces).
 
-    area 2.2% (1.3% >300 A^2); dG Pearson 0.956 (median 1.05 kcal/mol);
-    stab Pearson 0.977; H-bonds 91% within +-1; salt bridges mean |diff|
-    0.08; disulfides 100% exact; CSS Spearman 0.71. Polymer-polymer subset
-    (the cryo-EM / predicted-model regime, n=153): area 1.5%, dG Pearson
-    0.980, stab 0.988, P-value Spearman 0.72, CSS Spearman 0.75.
+SCOPE, read this before quoting any number here: these 36 entries are
+hand-picked AND their interfaces are part of the set the shipped constants
+were fitted on, so this file measures **in-sample** agreement. It is a
+regression test -- it catches a pipeline that has broken -- not a measure of
+how fastPISA does on a structure it has never seen. For that, see
+``tests/test_calibration_benchmark.py``, which asserts grouped
+cross-validated accuracy over 674 entries / 6881 interfaces.
+
+Values measured after the 2026-09-01 residue-level recalibration (NACCESS
+radii, hierarchical solvation model; 265 interfaces now match, three more
+than before the negative-residue-number parser fix):
+
+    area 2.5% (1.3% >300 A^2); dG Pearson 0.967 (median 0.46 kcal/mol);
+    stab Pearson 0.981; P-value median |err| 0.079; H-bonds 91% within +-1;
+    salt bridges mean |diff| 0.08; disulfides 100% exact; CSS Spearman 0.74.
+    Polymer-polymer subset (the cryo-EM / predicted-model regime, n=154):
+    area 1.4%, dG Pearson 0.997 (median 0.24 kcal/mol), stab 0.996, P-value
+    median |err| 0.067 (Spearman 0.87), CSS Spearman 0.81.
+
+History on this set: the original 11-class constants (fitted on these 262
+interfaces alone) scored dG r 0.980 / median 1.28 on polymer pairs; the
+2026-09-01 sampled-benchmark refit 0.969 / 1.03; the residue-level model
+0.997 / 0.24. The companion test measures the same model out of sample.
 
 P-values of small-ligand/ion interfaces follow different PISA statistics
 and are not asserted. Refresh with ``python examples/compare_vs_pisa.py``.
@@ -78,10 +95,10 @@ def test_stabilization_energy_accuracy(benchmark):
 
 def test_p_value_accuracy(benchmark):
     _, s = benchmark
-    assert s["pv_median_abs_err"] < 0.18
+    assert s["pv_median_abs_err"] < 0.13
     # Ligand/ion p-values follow different PISA statistics; the rank
     # agreement is asserted on the polymer-polymer regime.
-    assert s["poly_pv_spearman"] > 0.60
+    assert s["poly_pv_spearman"] > 0.72
 
 
 def test_css_rank_agreement(benchmark):

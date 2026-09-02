@@ -34,6 +34,9 @@ def _interface_entry(iface: Any) -> Dict[str, Any]:
         "molecules": [mol1, mol2],
         "interface_area": iface.interface_area,
         "solvation_energy": iface.solvation_energy,
+        # fastPISA extension: hydrophobic / polar split of solvation_energy
+        "solvation_energy_apolar": iface.solvation_energy_apolar,
+        "solvation_energy_polar": iface.solvation_energy_polar,
         "stabilization_energy": iface.stabilization_energy,
         "p_value": iface.p_value,
         "css": iface.css,

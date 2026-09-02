@@ -14,32 +14,67 @@ same interfaces** for a structure.
 | `pisa` | Thermo/surface analysis: ASA/BSA, interface areas, ΔG, P-value, CSS, H-bonds / salt bridges / disulfides | PDBe PISA `assembly.json` + `interfaces.json` |
 | `cocomaps` | Residue–residue contact map with atomic interaction-type classification (H-bond, salt bridge, pi-pi, cation-pi, ch-pi, …) | Superset of the PISA schema + `interface_contact_map` per interface |
 
-**Validated against original PISA** (EBI PDBe PISA service, 262 identity
-interfaces from 36 diverse PDB entries — proteases, antibodies, receptors,
-hemoglobin, protein–DNA/RNA, glycans, cofactors, ions; reproduce with
-`python examples/compare_vs_pisa.py`):
+## How it compares to PISA
 
-| Quantity | All interfaces (n=262) | Polymer–polymer only (n=153)* |
+fastPISA is calibrated against the original PISA engine on **674 PDB entries /
+6,915 interfaces / 119k interface residues** (400 entries a seeded random draw
+from a stated sampling frame, de-duplicated at 30% sequence identity; 36 legacy
+hand-picked). It uses PISA's own conventions where they could be recovered —
+the NACCESS/Chothia surface radii, per-element ion radii read off PISA's own
+lone-ion surfaces, a per-atom-type solvation model fitted to PISA's
+per-residue solvation energies — and reports every number below by **grouped
+10-fold cross-validation** (no fold is scored on an entry it was fitted on).
+
+![fastPISA vs PISA: area, solvation energy, P-value](docs/figures/energetics_vs_pisa.png)
+
+| Quantity (vs original PISA) | Polymer–polymer (n=2,314) | All interfaces incl. ligands/ions (n=6,915) |
 |---|---|---|
-| Interface area | median rel. error 2.2% (1.3% > 300 Å²) | 1.5% |
-| Solvation ΔG | Pearson 0.956, median error 1.05 kcal/mol | **Pearson 0.980** |
-| Stabilization energy | Pearson 0.977 (per-bond constants recovered exactly) | **Pearson 0.988** |
-| P-value | median error 0.12 | Spearman 0.72 |
-| CSS | Spearman 0.71 (calibrated surrogate) | Spearman 0.75 |
-| H-bond counts | 91% within ±1 | — |
-| Salt bridges | mean diff 0.08 per interface | — |
-| Disulfides | 100% exact | — |
+| Interface area | median rel. error **1.8%** (1.5% > 300 Å²) | 3.4% (ligand pairs 6.0%) |
+| Per-residue buried area | median rel. error **1.75%** (119k residues) | — |
+| Solvation ΔG | **r 0.987**, R² about 1:1 **0.975**, median error **0.33 kcal/mol**, slope 0.98 | r 0.956, R² 0.914, median 0.76 |
+| Stabilization energy | r 0.996 (per-bond constants recovered exactly) | — |
+| Hydrophobicity P-value | median error **0.060**, Spearman **0.88** | Spearman 0.38 |
+| CSS | Spearman 0.75 (calibrated surrogate) | Spearman 0.64 |
+| H-bond atom pairs | precision **0.958** / recall **0.952** against PISA's own bond list | — |
+| Salt-bridge atom pairs | precision 0.985 / recall 0.979 | — |
+| Disulfides | exact | — |
 
-\* the cryo-EM / AlphaFold-model regime (protein/nucleic-acid chain pairs, no
-small-molecule ligand side). Verified out-of-sample twice: on 15 classic
-entries the fit had never seen (polymer–polymer ΔG Pearson 0.977), and on
-**20 recent (2023–2024) depositions** compared blind against the modern PDBe
-PISA 2.0 JSON API on biological-assembly coordinates — 87 interfaces, ΔG
-Pearson **0.978**, stab **0.986**, area 3.0% median, P-value error 0.11
-(`python examples/compare_vs_pisa.py --assembly-entries <ids>`). H-bond
-counts differ more vs PISA *2.0* (64% within ±1) than vs classic PISA (91%)
-— the two PISA versions themselves disagree on H-bond criteria; fastPISA is
-calibrated to the classic engine.
+![Per-residue buried area and solvation energy](docs/figures/residues_vs_pisa.png)
+
+Every interface also carries the **hydrophobic / polar split** of ΔG
+(`solvation_energy_apolar` = carbon + sulfur burial, `solvation_energy_polar` =
+the rest; they sum to `solvation_energy`). PISA has no separate hydrophobic
+contact list — its hydrophobic term *is* this favourable burial.
+
+**Where it is weaker, stated plainly.** Ligand / ion interfaces are less
+accurate than chain pairs. Oxo-anions, halides, Na⁺/Ca²⁺ and organic ligands
+now agree to within a few percent in area, but transition metals with short
+coordination bonds (Mg, Mn, Fe, Cu, and to a lesser extent Zn) are still
+buried 12–35% more than PISA buries them, and no radius or neighbour rule we
+tested reproduces PISA there. Treat those energies as indicative.
+
+![Ligand interface area by ligand type](docs/figures/ligand_area_by_type.png)
+
+Contact maps and bond lists come out of the same run. Below: the barnase–barstar
+interface (1brs A+D), COCOMAPS-classified residue contacts on the left, the
+H-bond / salt-bridge atom pairs on the right, cross-checked against PISA's
+list for the same interface.
+
+![1brs contact map and bonds](docs/figures/contact_map_1brs.png)
+
+Regenerate every figure and number offline with `python examples/make_figures.py`
+and `python examples/calibrate.py` from the committed tables in
+`tests/data/calibration/`.
+
+**Speed** (single core, FreeSASA backend, `combined` mode = PISA energetics
+*and* the contact map):
+
+| atoms | molecules | interfaces | time |
+|---|---|---|---|
+| 1,784 | 4 | 5 | 0.4 s |
+| 4,062 | 16 | 27 | 0.7 s |
+| 11,550 | 6 | 7 | 1.0 s |
+| 58,000 (GroEL/ES, 21 chains) | 21 | 70 | ~7 s |
 
 **Validated against COCOMAPS 2.0** (the actual standalone tool, Zenodo
 `10.5281/zenodo.17390665`, run on the same inputs with REDUCE-added
@@ -108,48 +143,44 @@ Output files per run:
 
 ## Python API
 
-Use fastPISA directly from Python — introspect `Interface` objects, not just JSON.
-
 ```python
-from fastpisa.api import PISAInterfaceAnalyzer
+import fastpisa
 
-# PISA mode
-ana = PISAInterfaceAnalyzer("6nxr.pdb", pdb_id="6nxr", mode="pisa")
-ana.analyze()
+res = fastpisa.analyze("complex.pdb")        # PDB or mmCIF; AlphaFold models fine
+res                                          # readable summary of every interface
+# <fastPISA complex: 3 interfaces (combined mode)>
+#   <Interface 1: A + B | area 779 A^2, dG -1.9 (apolar -13.3, polar +11.4), stab -10.3 kcal/mol,
+#    P 0.55, CSS 0.28 | 15 H-bonds, 12 salt bridges, 0 SS>
+#   ...
 
-print(ana.summary())                       # human-readable report
-for iface in ana.interfaces:               # list of Interface objects
-    print(iface.interface_id,
-          round(iface.interface_area, 1),
-          iface.number_interface_residues,
-          len(iface.contacts))
+iface = res.interface_between("A", "B")     # or res[0], or `for iface in res:`
+iface.interface_area, iface.solvation_energy, iface.stabilization_energy
+iface.solvation_energy_apolar, iface.solvation_energy_polar   # hydrophobic / polar parts
+iface.p_value, iface.css
 
-# Switch to COCOMAPS on the same instance
-ana.mode = "cocomaps"
-ana.analyze(recompute=True)
-cm = ana.get_interface(1).cocomaps         # contact map + interaction population
-print(cm["interaction_population"])
+for hb in iface.hydrogen_bonds:              # AtomContact objects; also .salt_bridges, .disulfides
+    print(hb.label)                          #  A:ARG83.O -- D:TYR29.OH  2.65 A
+iface.bonds_dataframe()                      # pandas: chain/residue/seq/atom x2, distance, type
 
-# Write the JSON documents
-ana.write_json("out/")
+iface.contact_map                            # COCOMAPS residue-residue map (list of dicts)
+iface.contact_map_dataframe()                # ... as pandas
+iface.interaction_population                 # {'hydrogen_bond': 15, 'salt_bridge': 12, 'ch_pi': ...}
+iface.residues(side=1)                       # interface residues with ASA / BSA / dG each
+
+res.to_dataframe()                           # one row per interface
+res.hot_spot_residues(top_n=10)              # residues burying the most area
+res.write_json("out/")                       # PDBe-PISA-shaped JSON (+ contact maps)
 ```
 
-One-shot function:
+Options go through the same call: `fastpisa.analyze(path, mode="pisa")`
+(energetics only, fastest), `mode="cocomaps"`, `ligand_mode="merge"` (cofactors
+belong to their chain, the jsPISA-on-assembly convention), `min_css=0.5`.
+The full class is `fastpisa.api.PISAInterfaceAnalyzer` (same object
+`analyze()` returns) and the legacy one-shot `analyze_interface()` still works.
 
-```python
-from fastpisa.api import analyze_interface
-result = analyze_interface("complex.cif", pdb_id="c1", mode="cocomaps")
-# result = {"interfaces": {...}, "assembly": {...}, "interfaces_obj": [...]}
-```
-
-Key accessors on `PISAInterfaceAnalyzer`:
-
-- `.interfaces` — list of `Interface` dataclass objects
-- `.interfaces_json` / `.assembly_json` — the two JSON documents as dicts
-- `.summary()` — human-readable report
-- `.write_json(dir)` — write the two JSON files, returns their paths
-- `.get_interface(id)` — fetch one interface object
-- `.mode` — `"combined"` (default), `"pisa"` or `"cocomaps"`; `.analyze(recompute=True)` re-runs
+Visualisation helpers in `fastpisa.viz`: `plot_contact_heatmap`,
+`write_pymol_script`, `write_molstar_html`; a contact-map figure like the one
+above is `examples/make_figures.py::fig_contact_map`.
 
 ---
 
@@ -319,6 +350,30 @@ and `--hotspots N` prints the top-N buried residues. The matplotlib heatmap need
 
 ---
 
+## What's new in 0.4.0
+
+- **Calibrated on 674 sampled PDB entries, at residue level.** The 36-entry
+  hand-picked benchmark is replaced by a seeded random draw from a stated
+  sampling frame (30% identity de-duplicated); every accuracy figure is
+  grouped cross-validated. PISA's per-residue solvation energies (119k
+  residues) fit a 32-class + per-atom-type solvation model; polymer ΔG
+  median error 1.0 → 0.33 kcal/mol.
+- **PISA's own surface conventions recovered**: NACCESS/Chothia radii
+  (sp2/sp3 carbon distinguished), per-element ion radii read off PISA's
+  lone-ion surfaces. Per-residue buried area error 6.1% → 1.75%; ligand
+  interface area 12% → 6%.
+- **Atom-level bond audit** against PISA's H-bond / salt-bridge lists
+  (`fastpisa/reference/bonds_audit.py`): precision/recall 0.96/0.95 and
+  0.985/0.98. Fixed a parser bug that collapsed negative residue numbers
+  onto 0.
+- **Hydrophobic / polar split** of the solvation energy on every interface.
+- **Pythonic API**: `fastpisa.analyze()`, iterable results, readable
+  `repr`, `iface.hydrogen_bonds` / `.salt_bridges` / `.contact_map` /
+  `.residues()` / DataFrame helpers, `res.interface_between("A", "B")`.
+- **Reproducible calibration**: `examples/calibrate.py` refits every
+  constant from committed tables; a test fails if the shipped constants
+  drift from the data. README figures from `examples/make_figures.py`.
+
 ## What's new in 0.3.0
 
 - **One shared analysis core** (`fastpisa/core.py`): all modes run the same
@@ -343,9 +398,14 @@ and `--hotspots N` prints the top-N buried residues. The matplotlib heatmap need
 **Ground truths used** (all comparisons reproducible from this repo):
 
 1. **Classic EBI PISA engine** — XML from
-   `https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/interfaces.pisa?<id>`; 36 entries
-   cached in `tests/data/reference/` (identity/ASU interfaces only). Drives
-   the calibration and `tests/test_vs_pdbe_pisa.py`.
+   `https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/interfaces.pisa?<id>` for 674
+   entries (identity/ASU interfaces; per-interface energetics, per-residue
+   ASA/BSA/ΔG and the atom-level bond lists). The 36 legacy entries are
+   cached in `tests/data/reference/`; the 400 sampled entries are distilled
+   into `tests/data/calibration/` (sampling frame and seed:
+   `fastpisa/reference/sampling.py`, entry list `entries.json`). Drives the
+   calibration, `tests/test_calibration_benchmark.py` (out-of-sample) and
+   `tests/test_vs_pdbe_pisa.py` (in-sample regression).
 2. **PDBe PISA 2.0 JSON API** (biological assemblies; covers recent
    entries) — blind test on 20 depositions from 2023–2024, fastPISA run on
    the same assembly coordinates.
@@ -361,8 +421,8 @@ agreement table shown at the top of this README. The same numbers are pinned
 as a regression test in `tests/test_vs_pdbe_pisa.py`. `--fetch <pdbid> ...`
 extends the benchmark with new entries (network required once).
 
-Speed (with the FreeSASA C backend): the original 21-entry benchmark runs in ~7 s
-total; GroEL/GroES (1aon: 58k atoms, 21 chains, 70 interfaces) takes 7.4 s in
+Speed (with the FreeSASA C backend): typical complexes take 0.2–1 s (table
+above); GroEL/GroES (1aon: 58k atoms, 21 chains, 70 interfaces) takes ~7 s in
 combined mode. fastPISA is ~3–4x faster than the original CCP4 binary on
 comparable inputs and ~15x faster than its own pure-Python fallback. Per-pair
 surfaces are computed only near each interface, so runtime scales with

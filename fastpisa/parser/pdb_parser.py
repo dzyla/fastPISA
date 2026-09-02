@@ -180,7 +180,13 @@ def parse_pdb(path: str) -> PDBStructure:
             altloc = line[16].strip() if line[16].strip() else " "
             res_name = line[17:20].strip()
             chain_id = line[21].strip()
-            res_seq = int(line[22:26]) if line[22:26].strip().isdigit() else 0
+            # int() rather than isdigit(): negative residue numbers ("  -4",
+            # common for expression tags and DNA numbered about a centre)
+            # are valid and must not collapse onto residue 0.
+            try:
+                res_seq = int(line[22:26])
+            except ValueError:
+                res_seq = 0
             icode = line[26].strip()
             x = float(line[30:38])
             y = float(line[38:46])

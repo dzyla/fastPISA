@@ -22,4 +22,11 @@ Use:
 CLI: python -m fastpisa.cli <pdb_file> --mode {combined,pisa,cocomaps}
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
+
+
+def analyze(path, pdb_id=None, **kwargs):
+    """``fastpisa.analyze("complex.pdb")`` -- see :func:`fastpisa.api.analyze`."""
+    from fastpisa.api import analyze as _analyze
+    return _analyze(path, pdb_id=pdb_id, **kwargs)
+
