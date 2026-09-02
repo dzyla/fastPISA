@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from fastpisa.surface.shrake_rupley import get_vdw_radius
+from fastpisa.surface.shrake_rupley import surface_radius
 
 try:  # fmt: off
     import freesasa
@@ -67,7 +67,7 @@ def calculate_asa_freesasa(
         coords[3 * i] = a.x
         coords[3 * i + 1] = a.y
         coords[3 * i + 2] = a.z
-        radii[i] = get_vdw_radius(a.element)
+        radii[i] = surface_radius(a)
         if atom_radii:
             gi = atom_indices[i] if atom_indices is not None else i
             if gi in atom_radii:

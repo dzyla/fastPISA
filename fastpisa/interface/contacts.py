@@ -74,6 +74,11 @@ class Interface:
     molecule2_id: int
     interface_area: float = 0.0
     solvation_energy: float = 0.0
+    # hydrophobic (C/S burial) and polar (N/O/ion burial) parts of
+    # solvation_energy; they sum to it. PISA's "hydrophobic interactions"
+    # live here, not in a contact list.
+    solvation_energy_apolar: float = 0.0
+    solvation_energy_polar: float = 0.0
     stabilization_energy: float = 0.0
     p_value: float = 0.0
     css: float = 0.0

@@ -129,9 +129,13 @@ class TestAspCalibratedConvention:
             assert get_asp("ZZ9", element) == pytest.approx(SIGMA[element])
 
     def test_charged_class_requires_the_residue(self):
-        # Lys NZ is charged; the same atom name without residue context is
-        # neutral N.
-        assert get_asp("NZ", "N", "LYS") == pytest.approx(SIGMA["N+"])
+        # Lys NZ is charged (its own class, a desolvation PENALTY); the same
+        # atom name without residue context is a neutral hetero N.
+        from fastpisa.energy.asp_table import DELTA, atom_class
+        assert atom_class("NZ", "N", "LYS") == "N_lys"
+        assert get_asp("NZ", "N", "LYS") == pytest.approx(
+            SIGMA["N_lys"] + DELTA.get("LYS:NZ", 0.0))
+        assert get_asp("NZ", "N", "LYS") > 0 > get_asp("CB", "C", "LYS")
         assert get_asp("NZ", "N") == pytest.approx(SIGMA["N"])
 
     def test_hydrogens_carry_no_solvation(self):

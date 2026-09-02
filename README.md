@@ -26,28 +26,41 @@ Every figure below is **grouped 10-fold cross-validated** — each fold is
 fitted without the PDB entries it is scored on, because interfaces within an
 entry share chains and chemistry and are not independent observations:
 
-| Quantity | Polymer–polymer (n=2303)* | Ligand-involving (n=4578) |
+| Quantity | Polymer–polymer (n=2314)* | Ligand-involving (n=4590) |
 |---|---|---|
-| Interface area | median rel. error **1.8%** (1.5% > 300 Å²) | 12% |
-| Solvation ΔG | **Pearson 0.971**, R² about 1:1 **0.940**, median error **0.74 kcal/mol**, bias +0.15 | Pearson 0.81 overall, R² 0.65, heavy tail |
-| Stabilization energy | Pearson 0.990 (per-bond constants recovered exactly) | — |
-| P-value | median error **0.067**, Spearman **0.85** | Spearman 0.33 |
-| CSS | Spearman 0.73 (calibrated surrogate) | Spearman 0.60 |
-| H-bond counts | 91% within ±1 | — |
-| Salt bridges | mean diff 0.08 per interface | — |
+| Interface area | median rel. error **1.8%** (1.5% > 300 Å²); per-residue BSA **1.75%** | 9% |
+| Solvation ΔG | **Pearson 0.987**, R² about 1:1 **0.975**, median error **0.33 kcal/mol**, bias −0.01, slope 0.98 | Pearson 0.83 overall, R² 0.68, heavy tail |
+| Stabilization energy | Pearson 0.996 (per-bond constants recovered exactly) | — |
+| P-value | median error **0.060**, Spearman **0.88** | Spearman 0.34 |
+| CSS | Spearman 0.75 (calibrated surrogate) | Spearman 0.60 |
+| H-bond atom pairs | precision **0.958** / recall **0.952** vs PISA's own bond list; counts 91% within ±1 | — |
+| Salt-bridge atom pairs | precision 0.985 / recall 0.979 | — |
 | Disulfides | 100% exact | — |
 
+Every interface also reports the **hydrophobic / polar split** of ΔG
+(`solvation_energy_apolar` = carbon + sulfur burial, `solvation_energy_polar`
+= the rest; they sum to `solvation_energy`). PISA has no separate hydrophobic
+contact list — its hydrophobic term *is* this favourable burial.
+
 \* the cryo-EM / AlphaFold-model regime (protein/nucleic-acid chain pairs, no
-small-molecule ligand side) — the regime this tool is built for, and the one
-that holds up: the *previous* constants, tested blind on the 638 entries they
-had never seen, still scored Pearson 0.963 / R² 0.926 there.
+small-molecule ligand side) — the regime this tool is built for. Protein–DNA/RNA
+pairs (n=241) sit at R² 0.96, median 0.30 kcal/mol.
+
+How it got there (2026-09-01, second pass): surfaces now use the
+**NACCESS/Chothia radius set** PISA itself uses (recovered by fitting radii to
+PISA's per-residue ASA — the fit lands on the published values), which took the
+per-residue buried-area error from 6.1% to 1.75%; and the solvation model is
+fitted at the **residue level** to PISA's own per-residue solvation energies
+(119k residues) with a 32-class chemical scheme plus shrunk per-atom-type
+deviations, which halved the interface ΔG error again. See
+`fastpisa/energy/asp_table.py` for the model and its provenance.
 
 **Ligand-involving interfaces are markedly less accurate, and earlier
 versions of this README overstated them.** The old "Pearson 0.956 over all
 interfaces" came from a 36-entry hand-picked set whose ligand cases were
 unrepresentatively easy; on an unbiased sample the honest number is 0.81.
 The cause is geometric, not thermodynamic — ion and small-additive interface
-*areas* differ from PISA by 12% at the median before any energy constant is
+*areas* differ from PISA by 9% at the median before any energy constant is
 applied (metals such as Zn/K/Mg and cryo-additives such as acetate, iodide,
 MPD dominate the tail). Treat ligand-interface energies as indicative.
 

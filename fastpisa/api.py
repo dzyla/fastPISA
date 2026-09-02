@@ -222,6 +222,8 @@ class PISAInterfaceAnalyzer:
                 "molecule2_id": i.molecule2_id,
                 "interface_area": i.interface_area,
                 "solvation_energy": i.solvation_energy,
+                "solvation_energy_apolar": i.solvation_energy_apolar,
+                "solvation_energy_polar": i.solvation_energy_polar,
                 "stabilization_energy": i.stabilization_energy,
                 "p_value": i.p_value,
                 "css": i.css,
@@ -491,6 +493,8 @@ class PISAInterfaceAnalyzer:
             if weight < 1.0:
                 i.stabilization_energy = round(i.stabilization_energy * weight, 2)
                 i.solvation_energy = round(i.solvation_energy * weight, 2)
+                i.solvation_energy_apolar = round(i.solvation_energy_apolar * weight, 2)
+                i.solvation_energy_polar = round(i.solvation_energy_polar * weight, 2)
                 i.css = round(i.css * weight, 3)
 
     # -- visualisation helpers --------------------------------------------

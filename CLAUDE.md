@@ -41,17 +41,19 @@ ana.summary(), ana.write_json("out/")
 
 ## Validation status (2026-09-01; don't regress these)
 
-- vs original PISA, **6881 identity interfaces from 674 entries** (400 a
-  seeded random draw from a stated sampling frame, de-duplicated at 30%
-  sequence identity; 36 legacy hand-picked). All figures are **grouped
-  10-fold CV**, folds never splitting a PDB entry:
-  polymer-polymer (n=2303) area 1.8% median, dG r 0.971 / R^2(1:1) 0.940 /
-  median |err| 0.74 kcal/mol, stab r 0.990, P-value median |err| 0.067
-  (Spearman 0.85), CSS Spearman 0.73; ligand-involving (n=4578) is much
-  weaker -- dG r 0.81 overall, area 12% median -- and is documented as
-  indicative, not calibrated. H-bonds 91% within +-1; salt 0.08 mean diff;
-  disulfides exact. Blind on 20 recent (2023-24) assemblies: dG r 0.978,
-  stab 0.986.
+- vs original PISA, **6904 identity interfaces / 119k interface residues
+  from 674 entries** (400 a seeded random draw from a stated sampling frame,
+  de-duplicated at 30% sequence identity; 36 legacy hand-picked). All
+  figures are **grouped 10-fold CV**, folds never splitting a PDB entry:
+  polymer-polymer (n=2314) area 1.8% median (per-residue BSA 1.75%), dG r
+  0.987 / R^2(1:1) 0.975 / median |err| 0.33 kcal/mol (legacy 36 in-sample:
+  r 0.997, 0.24), stab r 0.996, P-value median |err| 0.060 (Spearman 0.88),
+  CSS Spearman 0.75;
+  protein-NA (n=241) R^2 0.96. H-bond ATOM PAIRS vs PISA's list: precision
+  0.958 / recall 0.952; salt bridges 0.985 / 0.979; disulfides exact.
+  Ligand-involving (n=4590) is much weaker -- dG r 0.81 overall, area 9%
+  median -- and is documented as indicative, not calibrated. Blind on 20
+  recent (2023-24) assemblies (earlier constants): dG r 0.978, stab 0.986.
 - `tests/test_vs_pdbe_pisa.py` (legacy 36 entries) is IN-SAMPLE -- a
   breakage regression, not a generalisation measure. The out-of-sample
   guard is `tests/test_calibration_benchmark.py`, which asserts the grouped
@@ -79,12 +81,31 @@ are thin wrappers.
   `tests/test_calibration_benchmark.py::test_shipped_constants_match_a_full_refit`
   fails if the shipped sigmas ever drift from what the data refits to. Don't
   tweak constants by hand.
-- **The feature table is sufficient statistics, not coordinates.** dG_solv is
-  linear in the sigmas, so per-class buried areas + the buried-patch moments
-  reproduce the pipeline's dG and P-value EXACTLY. That is why a 674-entry
-  benchmark fits in 746 kB and its regression test runs in 3 s. Regenerate
-  with `examples/extract_calibration_features.py` after any change to
-  `atom_class`, the surface code, or interface detection.
+- **The solvation model is two-level and fitted at RESIDUE level.**
+  `sigma(atom) = SIGMA[class] + DELTA[fine type]` (32 chemical classes +
+  167 shrunk per-atom-type deviations, ridge 1000). It is fitted to PISA's
+  per-residue solvation energies (`tests/data/calibration/residue_fit.json.gz`,
+  2.4 MB, committed) because interface sums cannot separate the atoms they
+  add (interface-level fit is 60% worse out of fold). Judged at interface
+  level by grouped CV on `features.json.gz` (4.9 MB, committed; buried area
+  per FINE type + surface composition per fine type -> exact dG and P-value).
+  Regenerate both with `examples/extract_calibration_features.py`
+  (`--residues` for the local 10 MB audit table) after any change to atom
+  typing, the surface code, or interface detection.
+- **Surface radii are the NACCESS/Chothia set** (`surface_radius()` in
+  `surface/shrake_rupley.py`: sp3 C 1.87, sp2/aromatic C 1.76, N 1.65,
+  O 1.40, S 1.85) -- recovered empirically as what PISA uses. They are for
+  ASA ONLY; `get_vdw_radius()` (COCOMAPS contact classification, validated
+  identical to COCOMAPS 2.0) is a different convention. Don't merge them.
+- **Residue numbers can be negative.** The PDB parser used `isdigit()` and
+  collapsed "-4" onto 0, silently merging residues (DNA numbered about a
+  centre, expression tags). Fixed; `tests/test_pisa_fidelity.py` guards it.
+- **H-bond criteria were audited pair-by-pair against PISA's lists (30k
+  candidate pairs) and left alone**: the 90 degree antecedent-angle cutoff
+  sits exactly on PISA's step (5% listed below, 95% above). Known residual:
+  PISA lists only ~half of Watson-Crick N1-N3 pairs in DNA duplexes with no
+  discernible rule; we list them all. `fastpisa/reference/bonds_audit.py`
+  reproduces the audit.
 - **CSS was re-examined and deliberately NOT refitted**: a refit lowers MAE
   but degrades rank agreement, which is what CSS is used for. Don't "improve"
   it on log-loss.
@@ -118,8 +139,11 @@ are thin wrappers.
   there (a buried chloride scored 0.0 against PISA's -12 kcal/mol) and now
   have their own fitted `HAL` class. `P` exists as a class but is pinned to
   0: phosphorus buries a median 1.5 A^2 (the OP oxygens shield it) and its
-  fitted value is indistinguishable from zero. Before adding an element to
-  `X`, check whether the benchmark can fit it instead.
+  fitted value is indistinguishable from zero (same for `NA_P`). Nucleotide
+  classes fit with INVERTED signs vs protein (positive C, negative O); that
+  is well-determined (|z| > 7, block condition 24) and is PISA's behaviour,
+  not a bug. Before adding an element to `X`, check whether the benchmark
+  can fit it instead.
 - **FreeSASA:** do NOT call `Parameters.setAlgorithm("ShrakeRupley")`
   (segfaults on single-atom inputs). `calcCoord` wants a flat 3N coord array;
   `atom_indices` maps output indices only — callers pre-subset `atoms`.

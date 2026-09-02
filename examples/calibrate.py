@@ -21,6 +21,11 @@ What it reports, and why each part is there:
    entry, because interfaces within an entry are correlated).
 4. **Refit on everything**, with standard errors and the design-matrix
    condition number, so ill-determined classes are visible.
+5. **The shipped model** -- the residue-level hierarchical fit (class sigma +
+   shrunk per-atom-type deviation) re-derived from the committed
+   ``residue_fit.json.gz`` and cross-validated at interface level. This is
+   the fit ``asp_table.py`` carries; steps 3-4 are the class-level
+   diagnostics.
 
 Correlation is reported alongside bias, slope and R^2 about the 1:1 line:
 Pearson r is inflated by the two-orders-of-magnitude spread of interface
@@ -32,11 +37,12 @@ import sys
 
 import numpy as np
 
-from fastpisa.energy.asp_table import SIGMA
+from fastpisa.energy.asp_table import DELTA, SIGMA, class_of_fine
 from fastpisa.reference.calibrate import (
-    CLASSES, class_support, cross_validate_sigma, dg_metrics, entry_folds,
-    fit_css, fit_p_scale, fit_sigma, load_feature_table, predict_css,
-    predict_dg, predict_p,
+    CLASSES, FINE_TYPE_RIDGE, class_support, cross_validate_sigma, dg_metrics,
+    entry_folds, fit_css, fit_p_scale, fit_sigma, fit_sigma_residue_level,
+    fitted_classes, fitted_fine_types, load_feature_table,
+    load_residue_fit_rows, predict_css, predict_dg, predict_p,
 )
 from fastpisa.reference.compare import BENCHMARK_ENTRIES
 from fastpisa.scoring.scoring import P_VALUE_Z_SCALE
@@ -187,6 +193,38 @@ def main():
         _print_dg("dG held-out shipped (poly)", dg_metrics(predict_dg(held, SIGMA), th, ph))
         _print_dg("dG held-out refit (poly)", dg_metrics(predict_dg(held, sigma_new), th, ph))
 
+    # ---- 5. the SHIPPED model: residue-level hierarchical refit ----------
+    rows = load_residue_fit_rows()
+    if rows:
+        classes_r = fitted_classes(rows)
+        fine_r = fitted_fine_types(rows)
+        sig_r, delta_r, diag_r = fit_sigma_residue_level(
+            rows, class_of_fine, classes_r, fine_r, FINE_TYPE_RIDGE,
+            polymer_only=False)
+        print(f"\n=== shipped model: residue-level hierarchical refit "
+              f"({diag_r['n_residues']} residues, {len(classes_r)} classes + "
+              f"{len(fine_r)} shrunk fine types, ridge {FINE_TYPE_RIDGE:g}) ===")
+        dmax_s = max(abs(sig_r[c] - SIGMA[c]) for c in classes_r)
+        dmax_d = max(abs(delta_r[t] - DELTA.get(t, 0.0)) for t in fine_r)
+        print(f"max |refit - shipped|: sigma {dmax_s:.2e}, delta {dmax_d:.2e}  "
+              f"(residual RMS per residue {diag_r['residual_rms']:.3f} kcal/mol)")
+        # honest interface-level CV of the shipped model
+        folds = entry_folds(records, k=args.k, seed=args.seed)
+        by_entry = {}
+        for pid, r in rows:
+            by_entry.setdefault(pid, []).append((pid, r))
+        oof = np.full(len(records), np.nan)
+        for fold in folds:
+            test_ent = {records[i]["pdb_id"] for i in fold}
+            train_rows = [row for pid, rs in by_entry.items() if pid not in test_ent for row in rs]
+            sg, dl, _ = fit_sigma_residue_level(train_rows, class_of_fine, classes_r, fine_r,
+                                                FINE_TYPE_RIDGE, polymer_only=False)
+            sg = dict(sg); sg.update({c: 0.0 for c in ("P", "NA_P")})
+            oof[fold] = predict_dg([records[i] for i in fold], sg, dl)
+        _print_dg("SHIPPED dG out-of-fold (all)", dg_metrics(oof, target))
+        _print_dg("SHIPPED dG out-of-fold (polymer)", dg_metrics(oof, target, poly))
+        sigma_new, z_sigma = dict(SIGMA), None
+
     # ---- P-value and CSS -------------------------------------------------
     print("\n=== P-value / CSS ===")
     report_pv_css(records, SIGMA, P_VALUE_Z_SCALE, CSS_COEF, "shipped")
@@ -230,11 +268,17 @@ def main():
               f"  Spearman={_spearman(css_oof[ok], css_ref[ok]):.3f}")
 
     if args.emit_sigma:
+        src = sig_r if rows else sigma_new
         print("\nSIGMA = {")
         for c in SIGMA:
-            v = sigma_new.get(c, SIGMA[c])
-            print(f'    "{c}":{" " * (5 - len(c))}{v:>9.5f},')
+            v = src.get(c, SIGMA[c])
+            print(f'    "{c}":{" " * (12 - len(c))}{v:>9.5f},')
         print("}")
+        if rows:
+            print("DELTA = {")
+            for t in sorted(delta_r):
+                print(f'    "{t}": {delta_r[t]:+.5f},')
+            print("}")
 
     if args.json:
         with open(args.json, "w") as fh:

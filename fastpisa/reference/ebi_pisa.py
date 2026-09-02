@@ -110,9 +110,11 @@ def _parse_bonds(iface_el, tag: str) -> List[dict]:
     for b in parent.findall("bond"):
         bonds.append({
             "chain1": _s(b, "chain-1"), "res1": _s(b, "res-1"),
-            "seqnum1": _s(b, "seqnum-1"), "atname1": _s(b, "atname-1"),
+            "seqnum1": _s(b, "seqnum-1"), "inscode1": _s(b, "inscode-1"),
+            "atname1": _s(b, "atname-1"),
             "chain2": _s(b, "chain-2"), "res2": _s(b, "res-2"),
-            "seqnum2": _s(b, "seqnum-2"), "atname2": _s(b, "atname-2"),
+            "seqnum2": _s(b, "seqnum-2"), "inscode2": _s(b, "inscode-2"),
+            "atname2": _s(b, "atname-2"),
             "dist": _f(b, "dist"),
         })
     return bonds

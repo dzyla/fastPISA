@@ -21,7 +21,8 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 
 from fastpisa.reference.calibrate import (
-    CALIBRATION_DIR, FEATURE_TABLE, extract_entry, save_feature_table,
+    CALIBRATION_DIR, FEATURE_TABLE, RESIDUE_TABLE, extract_entry,
+    extract_entry_residues, save_feature_table,
 )
 from fastpisa.reference.ebi_pisa import REFERENCE_DIR
 
@@ -35,9 +36,13 @@ def cached_entries():
     return ids
 
 
-def _safe_extract(pdb_id):
+_EXTRACT = {"features": extract_entry, "residues": extract_entry_residues}
+
+
+def _safe_extract(args):
+    pdb_id, kind = args
     try:
-        return pdb_id, extract_entry(pdb_id), None
+        return pdb_id, _EXTRACT[kind](pdb_id), None
     except Exception as exc:  # noqa: BLE001
         return pdb_id, [], f"{type(exc).__name__}: {exc}"
 
@@ -46,8 +51,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--entries", nargs="*", default=None)
     ap.add_argument("--workers", type=int, default=os.cpu_count() or 4)
-    ap.add_argument("--out", default=FEATURE_TABLE)
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--residues", action="store_true",
+                    help="write the residue-level table (fine atom types, "
+                         "PISA-matched residues; local artifact) instead of "
+                         "the class-level feature table")
     args = ap.parse_args()
+    kind = "residues" if args.residues else "features"
+    if args.out is None:
+        args.out = RESIDUE_TABLE if args.residues else FEATURE_TABLE
 
     ids = [e.lower() for e in args.entries] if args.entries else cached_entries()
     print(f"extracting features for {len(ids)} entries "
@@ -55,7 +67,8 @@ def main():
 
     records, failed = [], []
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        for i, (pid, recs, err) in enumerate(pool.map(_safe_extract, ids), 1):
+        jobs = [(pid, kind) for pid in ids]
+        for i, (pid, recs, err) in enumerate(pool.map(_safe_extract, jobs), 1):
             if err:
                 failed.append((pid, err))
             records.extend(recs)
@@ -64,6 +77,12 @@ def main():
                       file=sys.stderr)
 
     save_feature_table(records, args.out)
+    if args.residues:
+        n_res = sum(len(r["residues"]) for r in records)
+        print(f"{len(records)} interfaces, {n_res} PISA-matched residues "
+              f"-> {args.out} ({os.path.getsize(args.out)/1e6:.1f} MB)",
+              file=sys.stderr)
+        return
     meta = {
         "n_entries_attempted": len(ids),
         "n_entries_with_interfaces": len({r["pdb_id"] for r in records}),

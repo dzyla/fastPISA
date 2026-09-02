@@ -83,9 +83,11 @@ def calculate_p_value_pisa(
 #:
 #: The previous value, 0.219, came from the 36-entry hand-picked benchmark
 #: and was badly off. Grouped 10-fold cross-validation over polymer-polymer
-#: interfaces (n = 2303): median |P - P_ref| improves 0.115 -> 0.067 (-42%)
-#: and Spearman 0.818 -> 0.851. Over ligand-involving interfaces the
-#: agreement stays poor either way (Spearman ~0.33), as expected.
+#: interfaces: median |P - P_ref| improved 0.115 -> 0.067 (-42%) and
+#: Spearman 0.818 -> 0.851 at the time; with the residue-level solvation
+#: model it now stands at 0.060 / 0.88 (a refit lands at 0.48, no material
+#: change, so 0.46 is kept). Over ligand-involving interfaces the agreement
+#: stays poor either way (Spearman ~0.34), as expected.
 P_VALUE_Z_SCALE = 0.46
 
 
