@@ -45,10 +45,16 @@ def test_interpretation_flags(gi):
     assert interpret(empty)[0]["level"] == "warning"
 
 
-def test_figures_render(gi, cmp):
+def test_figures_render(res, gi, cmp):
     import figures as F
-    for fig in (F.footprint(gi, 1), F.footprint(gi, 2), F.residue_bars(gi), F.composition(gi),
-                F.bond_network(gi), F.contact_map(gi), F.compare_bars(cmp),
+    from fastpisa.report import chain_residue_axis
+    axis = {"A": chain_residue_axis(res, ["A"])}
+    assert len(axis["A"]) == 108 and axis["A"][0][3] in "ACDEFGHIKLMNPQRSTVWY"   # barnase A, polymer only
+    pair_maps = F.contact_maps_per_pair(gi)
+    assert len(pair_maps) == 1 and pair_maps[0][0] == "A + D"
+    full = F.full_contact_map(gi, chain_residue_axis(res, ["A"]), chain_residue_axis(res, ["D"]))
+    for fig in (F.footprint(gi, 1, axis), F.footprint(gi, 2), F.residue_bars(gi), F.composition(gi),
+                F.bond_network(gi), pair_maps[0][1], full, F.compare_bars(cmp),
                 F.compare_footprints(cmp, 1), F.compare_heatmap(cmp, 1)):
         png = F.fig_bytes(fig, "png", dpi=50)
         assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 1000
@@ -115,3 +121,22 @@ def test_chain_detection_and_superposition():
     assert len(m) == 1 and m[0].ref_chain == "A" and m[0].mob_chain in ("B", "C") and m[0].identity > 95
     sp = superpose(_BRS, _BRS, ["A"], ["B"])
     assert sp.rmsd < 1.0 and sp.n_aligned > 100 and "ATOM" in sp.aligned_text
+
+
+def test_proximity_and_render_scripts(res):
+    from fastpisa.report import chimerax_render_script, proximity_flags, pymol_render_script
+    gi = group_interface(res, ["A", "B"], ["D", "E"], "barnase", "barstar")
+    prox = gi.proximity_table()
+    assert set(prox["molecule 1"]) == {"A", "B"} and len(prox) == 4
+    touching = prox[prox["has_interface"]]
+    assert {tuple(x) for x in touching[["molecule 1", "molecule 2"]].values} == {("A", "D"), ("B", "E")}
+    far = prox[~prox["has_interface"]]
+    assert (far["min_distance"] > 5).all()                    # A+E / B+D are not omissions: they do not touch
+    flags = proximity_flags(gi.pair_proximity, "barnase", "barstar")
+    assert flags and "2 of 4" in flags[0]["text"]
+    none = group_interface(res, ["A"], ["F"])
+    assert proximity_flags(none.pair_proximity, "a", "b")[0]["level"] == "warning"
+    cx = chimerax_render_script(gi)
+    assert "color side1 & C #E69F00" in cx and "distance #1/" in cx and "lighting soft" in cx
+    pm = pymol_render_script(gi)
+    assert "util.cnc('side1')" in pm and "distance bond0" in pm

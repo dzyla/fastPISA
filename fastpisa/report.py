@@ -139,6 +139,9 @@ class GroupInterface:
     interaction_population: Dict[str, int] = field(default_factory=dict)
     residues_side1: List[ResidueEntry] = field(default_factory=list)
     residues_side2: List[ResidueEntry] = field(default_factory=list)
+    #: every cross-group chain pair with its closest approach (see
+    #: cross_pair_proximity); filled by group_interface
+    pair_proximity: List[dict] = field(default_factory=list)
 
     # -- derived -----------------------------------------------------------
     @property
@@ -238,6 +241,10 @@ class GroupInterface:
                     **{k: v for k, v in e.get("interaction_counts", {}).items()},
                 })
         return pd.DataFrame(rows)
+
+    def proximity_table(self):
+        import pandas as pd
+        return pd.DataFrame(self.pair_proximity)
 
     def residue_string(self, side: int, sep: str = ", ") -> str:
         res = self.residues_side1 if side == 1 else self.residues_side2
@@ -487,6 +494,10 @@ def group_interface(result, group1: Iterable[str], group2: Iterable[str],
     for k in ("interface_area", "buried_side1", "buried_side2", "dg_solv",
               "dg_apolar", "dg_polar", "stab_energy"):
         setattr(gi, k, round(getattr(gi, k), 2))
+    try:
+        gi.pair_proximity = cross_pair_proximity(result, g1, g2, gi)
+    except Exception:  # noqa: BLE001 - proximity is advisory
+        gi.pair_proximity = []
     return gi
 
 
@@ -682,11 +693,19 @@ def _nw_align(a: str, b: str, match: int = 2, mismatch: int = -1, gap: int = -2)
 
 
 def _chain_sequence(result, chain: str):
-    """[(seq, icode, one_letter)] of a chain from the parsed structure."""
+    """[(seq, icode, one_letter)] of the POLYMER residues of a chain, in order.
+
+    Waters, ions and ligands that share the chain letter are excluded --
+    otherwise a 107-residue Fv chain appears to run to residue 358 because
+    of its waters.
+    """
+    from fastpisa.interface.contacts import AMINO_ACIDS, NUCLEIC_ACIDS
     st = result._parsed_structure()
     seen = {}
     for a in st.atoms:
         if a.auth_asym_id.strip() != chain or a.element.strip().upper() in ("H", "D"):
+            continue
+        if a.res_name.strip().upper() not in AMINO_ACIDS and a.res_name.strip().upper() not in NUCLEIC_ACIDS:
             continue
         key = (a.res_seq, a.icode or "")
         if key not in seen:
@@ -839,3 +858,151 @@ def compare(entries: Sequence[ComplexEntry], side: int = 1, align: str = "auto")
     if len(entries) < 2:
         raise ValueError("need at least two complexes to compare")
     return Comparison(list(entries), side=side, align=align)
+
+
+# ---------------------------------------------------------------------------
+# Proximity of the two groups: every cross-group chain pair, touching or not
+# ---------------------------------------------------------------------------
+def cross_pair_proximity(result, group1: Sequence[str], group2: Sequence[str],
+                         gi: Optional["GroupInterface"] = None) -> List[dict]:
+    """One row per (group-1 molecule, group-2 molecule) combination.
+
+    ``has_interface`` says whether fastPISA found buried surface between the
+    two; ``min_distance`` is the closest heavy-atom approach in A. Pairs
+    that are far apart are listed explicitly so "why is A+D missing?" has an
+    answer: it is not missing, they do not touch.
+    """
+    import numpy as np
+    from scipy.spatial import cKDTree
+    from fastpisa.interface.contacts import (
+        get_molecules, get_molecule_masks, filter_water_molecules)
+
+    structure = result._parsed_structure()
+    atoms = structure.atoms
+    mols = filter_water_molecules(
+        get_molecules(structure, merge_ligands=(getattr(result, "ligand_mode", "separate") == "merge")),
+        exclude_water=True)
+    masks = get_molecule_masks(atoms, mols)
+    heavy = np.array([a.element.strip().upper() not in ("H", "D") for a in atoms])
+    coords = np.array([[a.x, a.y, a.z] for a in atoms])
+    by_label = {m["chain_id"]: np.flatnonzero(mask & heavy) for m, mask in zip(mols, masks)}
+    have = {tuple(sorted(p.chains)): p for p in (gi.pairs if gi else [])}
+    rows = []
+    for a in group1:
+        for b in group2:
+            ia, ib = by_label.get(a), by_label.get(b)
+            if ia is None or ib is None or len(ia) == 0 or len(ib) == 0:
+                continue
+            tree = cKDTree(coords[ib])
+            d, _ = tree.query(coords[ia], k=1)
+            dmin = float(d.min())
+            p = have.get(tuple(sorted((a, b))))
+            rows.append({"molecule 1": a, "molecule 2": b, "has_interface": p is not None,
+                         "interface_area": p.interface_area if p else 0.0,
+                         "min_distance": round(dmin, 2),
+                         "note": ("interface" if p else
+                                  "in contact but no buried surface" if dmin < 5.0 else
+                                  "no contact")})
+    return rows
+
+
+def proximity_flags(rows: Sequence[dict], label1: str, label2: str) -> List[dict]:
+    """Interpretation of :func:`cross_pair_proximity` rows."""
+    out = []
+    if not rows:
+        return [{"level": "warning", "text": "No molecule pairs to compare between the two groups."}]
+    touching = [r for r in rows if r["has_interface"]]
+    if not touching:
+        dmin = min(r["min_distance"] for r in rows)
+        out.append({"level": "warning", "text":
+                    f"{label1} and {label2} do not form an interface: the closest heavy atoms are "
+                    f"{dmin:.1f} A apart. Check the chain assignment (are the binder chains in the "
+                    f"right group?) and, for crystal structures, whether the partner is a symmetry mate "
+                    f"not present in the file."})
+        return out
+    far = [r for r in rows if not r["has_interface"]]
+    if far:
+        parts = [f"{r['molecule 1']}+{r['molecule 2']} ({r['min_distance']:.1f} A)" for r in far]
+        out.append({"level": "note", "text":
+                    f"{len(touching)} of {len(rows)} cross-group chain pairs form an interface. "
+                    f"Not in contact: {', '.join(parts)} -- listed so the absence is explicit, not an omission."})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Rendering scripts (not just selections)
+# ---------------------------------------------------------------------------
+def chimerax_render_script(gi: "GroupInterface", structure_name: str = "#1") -> str:
+    """ChimeraX script: chains coloured by side, interface residues as sticks
+    with carbons in the side colour and heteroatoms by element, bonds as
+    dashed pseudobonds, publication lighting."""
+    by = gi._side_residues()
+    c1 = sorted({_chain_of(c) for c in gi.group1})
+    c2 = sorted({_chain_of(c) for c in gi.group2})
+    m = structure_name
+    L = [
+        "# fastPISA interface rendering -- run after opening the structure as #1",
+        f"hide {m} atoms", f"show {m} cartoons", f"color {m} lightgray",
+        f"color {m}/{','.join(c1)} #F5CB7A cartoons" if c1 else "",
+        f"color {m}/{','.join(c2)} #8BB8E0 cartoons" if c2 else "",
+    ]
+    sel1 = "".join(f"/{ch}:{','.join(seqs)}" for ch, seqs in sorted(by[1].items()))
+    sel2 = "".join(f"/{ch}:{','.join(seqs)}" for ch, seqs in sorted(by[2].items()))
+    if sel1:
+        L += [f"name side1 {m}{sel1}", "show side1 atoms", "style side1 stick",
+              "color side1 & C #E69F00", "color side1 & ~C byhetero"]
+    if sel2:
+        L += [f"name side2 {m}{sel2}", "show side2 atoms", "style side2 stick",
+              "color side2 & C #0072B2", "color side2 & ~C byhetero"]
+    bonds = gi.bonds()
+    if bonds:
+        L.append("# hydrogen bonds / salt bridges as dashed pseudobonds")
+        for c in bonds:
+            a1 = f"{m}/{c.atom1_chain}:{c.atom1_seq}{c.atom1_icode}@{c.atom1_name.strip()}"
+            a2 = f"{m}/{c.atom2_chain}:{c.atom2_seq}{c.atom2_icode}@{c.atom2_name.strip()}"
+            col = {"hbond": "#1B9E77", "salt_bridge": "#D62728", "disulfide": "#E6AB02"}.get(c.bond_type, "black")
+            L.append(f"distance {a1} {a2} color {col} dashes 6 radius 0.08")
+    L += ["lighting soft", "graphics silhouettes true width 1.5", "set bgColor white",
+          "view side1 | side2" if (sel1 or sel2) else "view",
+          "# save image: save interface.png width 2400 supersample 3 transparentBackground true"]
+    return "\n".join(x for x in L if x)
+
+
+def pymol_render_script(gi: "GroupInterface", obj: str = "complex") -> str:
+    by = gi._side_residues()
+    c1 = sorted({_chain_of(c) for c in gi.group1})
+    c2 = sorted({_chain_of(c) for c in gi.group2})
+    L = ["# fastPISA interface rendering -- run after: load complex.pdb, complex",
+         f"hide everything, {obj}", f"show cartoon, {obj}", f"color grey80, {obj}",
+         f"color 0xF5CB7A, {obj} and chain {'+'.join(c1)}" if c1 else "",
+         f"color 0x8BB8E0, {obj} and chain {'+'.join(c2)}" if c2 else ""]
+    for side, col in ((1, "0xE69F00"), (2, "0x0072B2")):
+        parts = [f"(chain {ch} and resi {'+'.join(seqs)})" for ch, seqs in sorted(by[side].items())]
+        if parts:
+            L += [f"select side{side}, {obj} and ({' or '.join(parts)})",
+                  f"show sticks, side{side} and not name N+C+O", f"color {col}, side{side} and elem C",
+                  f"util.cnc('side{side}')"]
+    bonds = gi.bonds()
+    for k, c in enumerate(bonds):
+        a1 = f"{obj} and chain {c.atom1_chain} and resi {c.atom1_seq}{c.atom1_icode} and name {c.atom1_name.strip()}"
+        a2 = f"{obj} and chain {c.atom2_chain} and resi {c.atom2_seq}{c.atom2_icode} and name {c.atom2_name.strip()}"
+        L.append(f"distance bond{k}, {a1}, {a2}")
+    if bonds:
+        L += ["set dash_color, 0x1B9E77", "set dash_gap, 0.3", "set dash_radius, 0.08", "hide labels, bond*"]
+    L += ["set ray_opaque_background, 0", "set ray_shadows, 0", "set ambient, 0.35", "set specular, 0.1",
+          "orient side1 or side2" if by[1] or by[2] else "orient",
+          "# png interface.png, width=2400, dpi=300, ray=1"]
+    return "\n".join(x for x in L if x)
+
+
+def chain_residue_axis(result, chains: Sequence[str]) -> List[tuple]:
+    """Every residue of the given chains in order: (chain, seq, icode, one_letter).
+
+    Used by the full-sequence contact map so both axes span the whole
+    polymer, not only the interface residues.
+    """
+    out = []
+    for ch in chains:
+        for seq, ic, one in _chain_sequence(result, ch):
+            out.append((ch, seq, ic, one))
+    return out

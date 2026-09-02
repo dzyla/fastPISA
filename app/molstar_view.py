@@ -46,9 +46,21 @@ def _component(selector, children: list, label: Optional[str] = None) -> dict:
     return node
 
 
+#: CPK colours for heteroatoms; carbons take the side colour so the chain
+#: identity stays visible while chemistry (N/O/S) is readable.
+ELEMENT_COLORS = {"N": "#3050F8", "O": "#FF0D0D", "S": "#FFFF30", "P": "#FF8000",
+                  "F": "#90E050", "CL": "#1FF01F", "BR": "#A62929", "I": "#940094",
+                  "ZN": "#7D80B0", "MG": "#8AFF00", "CA": "#3DFF00", "FE": "#E06633"}
+
+
 def _repr(rtype: str, color: str, opacity: Optional[float] = None,
-          children: Optional[list] = None) -> dict:
+          children: Optional[list] = None, by_element: bool = False) -> dict:
+    """Representation node coloured uniformly (carbons and everything else),
+    optionally overriding heteroatoms with element colours."""
     kids = [{"kind": "color", "params": {"color": color}}]
+    if by_element:
+        for el, col in ELEMENT_COLORS.items():
+            kids.append({"kind": "color", "params": {"color": col, "selector": {"type_symbol": el}}})
     if opacity is not None:
         kids.append({"kind": "opacity", "params": {"opacity": opacity}})
     return {"kind": "representation", "params": {"type": rtype},
@@ -88,13 +100,13 @@ def build_mvs(structure_text: str, fmt: str, gi, show_surface: bool = False,
     # interface residues as ball-and-stick, strong colours
     focus_sel = res_sel1 + res_sel2
     if res_sel1:
-        kids = [_repr("ball_and_stick", side_colors[0])]
+        kids = [_repr("ball_and_stick", side_colors[0], by_element=True)]
         if show_labels:
             kids += [{"kind": "label", "params": {"text": f"{r.one}{r.seq}"}}
                      for r in gi.residues_side1[:0]]      # per-residue labels are added below
         children.append(_component(res_sel1, kids))
     if res_sel2:
-        children.append(_component(res_sel2, [_repr("ball_and_stick", side_colors[1])]))
+        children.append(_component(res_sel2, [_repr("ball_and_stick", side_colors[1], by_element=True)]))
     if show_labels:
         for r in list(gi.residues_side1) + list(gi.residues_side2):
             children.append(_component([_residue_selector(r.chain, r.seq, r.icode)],
@@ -211,10 +223,10 @@ def comparison_view_html(entries: Sequence[dict], height: int = 640) -> str:
                                        [_repr("cartoon", color, opacity=0.9)]))
         foot = [_residue_selector(r.chain, r.seq, r.icode) for r in gi.residues_side1]
         if foot and k == 0:
-            children.append(_component(foot, [_repr("ball_and_stick", color)]))
+            children.append(_component(foot, [_repr("ball_and_stick", color, by_element=True)]))
         elif foot:
             # footprint of a superposed complex is drawn on ITS OWN (moved) antigen copy
-            children.append(_component(foot, [_repr("ball_and_stick", color)]))
+            children.append(_component(foot, [_repr("ball_and_stick", color, by_element=True)]))
         if k == 0 and foot:
             children.append(_component(foot, [{"kind": "focus", "params": {}}]))
         structure = {"kind": "structure", "params": {"type": "model"}, "children": children}

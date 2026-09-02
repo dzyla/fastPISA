@@ -26,7 +26,8 @@ import streamlit as st
 
 import fastpisa
 from fastpisa.report import (
-    GUIDE, ComplexEntry, chain_inventory, compare, group_interface, interpret,
+    GUIDE, ComplexEntry, chain_inventory, chain_residue_axis, chimerax_render_script, compare,
+    group_interface, interpret, proximity_flags, pymol_render_script,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -87,10 +88,22 @@ def _detect_cached(ref_path: str, mob_path: str, ref_chains: tuple, candidates: 
             for m in detect_shared_chains(ref_path, mob_path, list(ref_chains), list(candidates))]
 
 
-def _fig_download(fig, name: str, key: str):
-    c = st.columns([1, 1, 6])
+def show_fig(fig, name: str, key: str, max_width: int = 1400):
+    """Render at native size (PNG at fixed DPI) inside a horizontally scrollable
+    box -- st.pyplot would squeeze wide figures into the column and make the
+    text overlap -- and offer PNG/SVG downloads at 300 dpi."""
+    import base64
+    png = F.fig_png(fig)
+    w_in, _ = fig.get_size_inches()
+    px = int(min(max_width, w_in * F.DPI))
+    st.markdown(f'<div style="overflow-x:auto;width:100%"><img src="data:image/png;base64,'
+                f'{base64.b64encode(png).decode()}" style="width:{px}px;max-width:none"></div>',
+                unsafe_allow_html=True)
+    c = st.columns([1, 1, 8])
     c[0].download_button("PNG", F.fig_bytes(fig, "png"), f"{name}.png", "image/png", key=f"{key}_png")
     c[1].download_button("SVG", F.fig_bytes(fig, "svg"), f"{name}.svg", "image/svg+xml", key=f"{key}_svg")
+    import matplotlib.pyplot as plt
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -121,12 +134,23 @@ with st.sidebar:
             name = name_in.strip() or os.path.basename(path).split(".")[0].split("_", 1)[-1]
             st.session_state.complexes.append({"name": name, "path": path, "label1": "antigen",
                                                "label2": "binder", "group1": [], "group2": []})
-    st.header("Analysis options")
-    ligand_mode = st.selectbox("Ligands / cofactors", ["separate", "merge"], index=0,
-                               help="separate: every hetero group is its own molecule (classic PISA). "
-                                    "merge: a chain's bound ligands belong to that chain.")
-    exclude_water = st.checkbox("Exclude water", value=True)
-    min_css = st.slider("Minimum CSS to keep an interface", 0.0, 1.0, 0.0, 0.05)
+    if "opts" not in st.session_state:
+        st.session_state.opts = {"ligand_mode": "separate", "exclude_water": True, "min_css": 0.0}
+    with st.form("options"):
+        st.header("Analysis options")
+        f_lig = st.selectbox("Ligands / cofactors", ["separate", "merge"],
+                             index=["separate", "merge"].index(st.session_state.opts["ligand_mode"]),
+                             help="separate: every hetero group is its own molecule (classic PISA). "
+                                  "merge: a chain's bound ligands belong to that chain.")
+        f_wat = st.checkbox("Exclude water", value=st.session_state.opts["exclude_water"])
+        f_css = st.slider("Minimum CSS to keep an interface", 0.0, 1.0, st.session_state.opts["min_css"], 0.05)
+        if st.form_submit_button("Apply options"):
+            st.session_state.opts = {"ligand_mode": f_lig, "exclude_water": f_wat, "min_css": float(f_css)}
+            for c in st.session_state.complexes:
+                c.pop("gi", None)
+    ligand_mode = st.session_state.opts["ligand_mode"]
+    exclude_water = st.session_state.opts["exclude_water"]
+    min_css = st.session_state.opts["min_css"]
 
 complexes = st.session_state.complexes
 if not complexes:
@@ -144,20 +168,28 @@ with st.sidebar:
             cx["res"] = res
             inv = chain_inventory(res)
             cx["inventory"] = inv
-            cx["label1"] = st.text_input("Side 1 name", cx["label1"], key=f"l1_{i}")
-            cx["label2"] = st.text_input("Side 2 name", cx["label2"], key=f"l2_{i}")
-            df = pd.DataFrame([{"molecule": r["label"], "type": r["class"], "res": r["n_residues"],
-                                cx["label1"]: r["label"] in cx["group1"],
-                                cx["label2"]: r["label"] in cx["group2"]} for r in inv])
-            edited = st.data_editor(
-                df, hide_index=True, width="stretch", key=f"ed_{i}",
-                column_config={"molecule": st.column_config.TextColumn(disabled=True),
-                               "type": st.column_config.TextColumn(disabled=True),
-                               "res": st.column_config.NumberColumn(disabled=True),
-                               cx["label1"]: st.column_config.CheckboxColumn(),
-                               cx["label2"]: st.column_config.CheckboxColumn()})
-            cx["group1"] = list(edited.loc[edited[cx["label1"]], "molecule"])
-            cx["group2"] = list(edited.loc[edited[cx["label2"]], "molecule"])
+            with st.form(f"groups_{i}"):
+                f_l1 = st.text_input("Side 1 name", cx["label1"], key=f"l1_{i}")
+                f_l2 = st.text_input("Side 2 name", cx["label2"], key=f"l2_{i}")
+                st.caption("Tick every chain that belongs to a side -- an antibody's H and L (or a whole "
+                           "Fab / Fv) go together as ONE binder; a dimeric antigen's two chains go together "
+                           "as one antigen.")
+                df = pd.DataFrame([{"molecule": r["label"], "type": r["class"], "res": r["n_residues"],
+                                    "side 1": r["label"] in cx["group1"],
+                                    "side 2": r["label"] in cx["group2"]} for r in inv])
+                edited = st.data_editor(
+                    df, hide_index=True, width="stretch", key=f"ed_{i}",
+                    column_config={"molecule": st.column_config.TextColumn(disabled=True),
+                                   "type": st.column_config.TextColumn(disabled=True),
+                                   "res": st.column_config.NumberColumn(disabled=True),
+                                   "side 1": st.column_config.CheckboxColumn(),
+                                   "side 2": st.column_config.CheckboxColumn()})
+                if st.form_submit_button("Apply chain assignment", type="primary"):
+                    cx["label1"], cx["label2"] = f_l1.strip() or "side 1", f_l2.strip() or "side 2"
+                    cx["group1"] = list(edited.loc[edited["side 1"], "molecule"])
+                    cx["group2"] = list(edited.loc[edited["side 2"], "molecule"])
+                    cx.pop("gi", None)
+                    st.rerun()
             if i > 0 and complexes[0]["group1"] and st.button("Auto-detect shared side from complex 1", key=f"auto_{i}"):
                 ref = complexes[0]
                 cands = tuple(r["label"] for r in inv if r["class"] != "Ligand")
@@ -184,12 +216,13 @@ if not cx["group1"] or not cx["group2"]:
     st.dataframe(res.to_dataframe(), width="stretch", hide_index=True)
     st.stop()
 
-try:
-    gi = group_interface(res, cx["group1"], cx["group2"], label1, label2)
-except ValueError as exc:
-    st.error(str(exc))
-    st.stop()
-cx["gi"] = gi
+if cx.get("gi") is None:
+    try:
+        cx["gi"] = group_interface(res, cx["group1"], cx["group2"], label1, label2)
+    except ValueError as exc:
+        st.error(str(exc))
+        st.stop()
+gi = cx["gi"]
 if gi.empty:
     st.warning(f"No interface between {label1} ({', '.join(cx['group1'])}) and {label2} ({', '.join(cx['group2'])}).")
     st.dataframe(res.to_dataframe(), width="stretch", hide_index=True)
@@ -215,27 +248,30 @@ with tab["Summary"]:
     c[3].metric("Salt bridges", gi.n_salt_bridges,
                 help=f"disulfides: {gi.n_disulfides}; residue pairs in contact: {gi.n_residue_pairs}")
     st.markdown("**What this interface looks like**")
-    for f in interpret(gi):
+    for f in proximity_flags(gi.pair_proximity, label1, label2) + interpret(gi):
         (st.warning if f["level"] == "warning" else st.info if f["level"] == "info" else st.write)(f["text"])
     st.markdown("**Results text** (edit freely)")
     st.code(gi.results_paragraph(), language=None)
     st.markdown("**Contributing chain-pair interfaces**")
     st.dataframe(gi.pair_table(), width="stretch", hide_index=True)
+    with st.expander(f"Every {label1} x {label2} chain combination (touching or not)"):
+        st.dataframe(gi.proximity_table(), width="stretch", hide_index=True)
+        st.caption("min_distance = closest heavy-atom approach. A pair without buried surface is not "
+                   "an omission: the two molecules do not touch in this file.")
     st.caption("P-value: probability that a random surface patch is as hydrophobic (low = specific). "
                "CSS: complexation significance score. Neither is additive over pairs.")
     fig = F.composition(gi)
-    st.pyplot(fig, width="stretch")
-    _fig_download(fig, f"{res.pdb_id}_composition", "comp")
+    show_fig(fig, f"{res.pdb_id}_composition", "comp")
 
 # ---- Residues ------------------------------------------------------------------
 with tab["Residues"]:
     for side, label in ((1, label1), (2, label2)):
-        fig = F.footprint(gi, side)
-        st.pyplot(fig, width="stretch")
-        _fig_download(fig, f"{res.pdb_id}_footprint_{label}", f"fp{side}")
+        chains = sorted({r.chain for r in (gi.residues_side1 if side == 1 else gi.residues_side2)})
+        axis = {c: chain_residue_axis(res, [c]) for c in chains}
+        fig = F.footprint(gi, side, axis)
+        show_fig(fig, f"{res.pdb_id}_footprint_{label}", f"fp{side}")
     fig = F.residue_bars(gi)
-    st.pyplot(fig, width="stretch")
-    _fig_download(fig, f"{res.pdb_id}_residues", "rb")
+    show_fig(fig, f"{res.pdb_id}_residues", "rb")
     c1, c2 = st.columns(2)
     for col, side, label in ((c1, 1, label1), (c2, 2, label2)):
         with col:
@@ -247,8 +283,7 @@ with tab["Residues"]:
 # ---- Bonds & contacts ------------------------------------------------------------
 with tab["Bonds & contacts"]:
     fig = F.bond_network(gi)
-    st.pyplot(fig, width="content")
-    _fig_download(fig, f"{res.pdb_id}_bond_network", "bn")
+    show_fig(fig, f"{res.pdb_id}_bond_network", "bn")
     bt = gi.bonds_table()
     kinds = st.multiselect("Bond types", ["hydrogen bond", "salt bridge", "disulfide"],
                            default=["hydrogen bond", "salt bridge", "disulfide"])
@@ -269,9 +304,18 @@ with tab["Bonds & contacts"]:
     if pop:
         st.dataframe(pd.DataFrame([{"class": k.replace("_", " "), "atom pairs": v}
                                    for k, v in sorted(pop.items(), key=lambda kv: -kv[1])]), hide_index=True)
-    fig = F.contact_map(gi)
-    st.pyplot(fig, width="content")
-    _fig_download(fig, f"{res.pdb_id}_contact_map", "cm")
+    st.markdown("**Residue contact maps, one per chain pair** (interface residues only)")
+    for k, (title, fig) in enumerate(F.contact_maps_per_pair(gi)):
+        show_fig(fig, f"{res.pdb_id}_contact_map_{title.replace(' ', '')}", f"cm{k}")
+    st.markdown("**Full-sequence contact map** (COCOMAPS style: every residue of both sides; cells mark "
+                "contacting pairs, lines mark chain boundaries)")
+    by = st.radio("Colour cells by", ["class", "distance"], horizontal=True, key="fullcm_by")
+    ax1 = chain_residue_axis(res, sorted({r.chain for r in gi.residues_side1}) or
+                             [c for c in cx["group1"] if not c.startswith("[")])
+    ax2 = chain_residue_axis(res, sorted({r.chain for r in gi.residues_side2}) or
+                             [c for c in cx["group2"] if not c.startswith("[")])
+    fig = F.full_contact_map(gi, ax1, ax2, by=by)
+    show_fig(fig, f"{res.pdb_id}_full_contact_map", "fcm", max_width=1600)
     with st.expander("Residue-pair table"):
         st.dataframe(gi.contact_map_table(), width="stretch", hide_index=True)
 
@@ -290,11 +334,20 @@ with tab["3D (Mol*)"]:
     st.caption("Mol* viewer. Interface residues as ball-and-stick; bonds as dashed lines labelled with the "
                "donor-acceptor distance. Use the expand icon for a full-screen view; the selection tool "
                "identifies residues.")
+    st.markdown("**Reproduce this view in ChimeraX / PyMOL** -- selections for the two sides, and a full "
+                "rendering script (chains coloured by side, interface residues as sticks with carbons in "
+                "the side colour and heteroatoms by element, bonds dashed, publication lighting).")
     c1, c2 = st.columns(2)
-    c1.markdown("**ChimeraX**")
+    c1.markdown("**ChimeraX: select sides**")
     c1.code(gi.chimerax_command(), language="bash")
-    c2.markdown("**PyMOL**")
+    c2.markdown("**PyMOL: select sides**")
     c2.code(gi.pymol_command(), language="bash")
+    c1.markdown("**ChimeraX: render**")
+    c1.code(chimerax_render_script(gi), language="bash")
+    c2.markdown("**PyMOL: render**")
+    c2.code(pymol_render_script(gi), language="bash")
+    st.download_button("ChimeraX script (.cxc)", chimerax_render_script(gi), f"{res.pdb_id}_interface.cxc", "text/plain")
+    st.download_button("PyMOL script (.pml)", pymol_render_script(gi), f"{res.pdb_id}_interface.pml", "text/plain")
 
 # ---- Compare -------------------------------------------------------------------
 if "Compare" in tab:
@@ -321,16 +374,13 @@ if "Compare" in tab:
             st.dataframe(cmp.summary_table(), width="stretch", hide_index=True)
             st.code(cmp.prose(), language=None)
             fig = F.compare_bars(cmp)
-            st.pyplot(fig, width="stretch")
-            _fig_download(fig, "comparison_bars", "cb")
+            show_fig(fig, "comparison_bars", "cb")
             st.markdown("**Footprint overlap on the shared side**")
             st.dataframe(cmp.overlap_table(), width="stretch", hide_index=True)
             fig = F.compare_footprints(cmp, side)
-            st.pyplot(fig, width="stretch")
-            _fig_download(fig, "comparison_footprints", "cf")
+            show_fig(fig, "comparison_footprints", "cf")
             fig = F.compare_heatmap(cmp, side)
-            st.pyplot(fig, width="stretch")
-            _fig_download(fig, "comparison_heatmap", "ch")
+            show_fig(fig, "comparison_heatmap", "ch")
             with st.expander("Per-residue buried area matrix"):
                 st.dataframe(cmp.residue_matrix(side), width="stretch")
             st.markdown("**All binders on one antigen (Mol\\*)**")

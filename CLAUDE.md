@@ -82,7 +82,13 @@ detection, `aligned_structure()` for superposition; app-only dependency).
 Numbers are sums over the chain-pair interfaces spanning the groups;
 P-value/CSS per pair only. Deploy on Streamlit Cloud with main file
 `app/streamlit_app.py`; `app/requirements.txt` installs `-e .` and pdb_align
-from GitHub. Headless test: `streamlit.testing.v1.AppTest` with
+from GitHub. Figures are rendered at NATIVE size (PNG at figures.DPI in a scrollable div via
+`show_fig`), never `st.pyplot` -- it squeezes wide figures until labels
+overlap; figure sizes are computed from content. Options and chain groups
+live in `st.form`s (nothing recomputes until Apply); the digest is cached on
+the complex dict (`cx['gi']`) and dropped on Apply. Every cross-group chain
+pair is listed with its min heavy-atom distance (`cross_pair_proximity`) so
+a missing pair is explained, not hidden. Headless test: `streamlit.testing.v1.AppTest` with
 `st.session_state["complexes"]` pre-seeded (the chain-group data_editor
 cannot be driven by AppTest). Mol* was verified in headless Chromium via
 Playwright with `--use-angle=swiftshader` (WebGL needs it).
