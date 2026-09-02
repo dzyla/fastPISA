@@ -495,3 +495,347 @@ def _int(s: str) -> int:
         return int(s)
     except ValueError:
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Interpretation: what the numbers mean for THIS interface
+# ---------------------------------------------------------------------------
+def interpret(gi: "GroupInterface") -> List[dict]:
+    """Automatic observations about a group interface.
+
+    Each item is ``{"level": "info"|"note"|"warning", "text": ...}``. The
+    thresholds are the usual rules of thumb from the PISA literature and
+    the antibody-antigen structural literature, and are stated in the text
+    so a reader can disagree with them.
+    """
+    out: List[dict] = []
+    if gi.empty:
+        return [{"level": "warning", "text": "No interface between the two groups: no surface is buried on association."}]
+    area = gi.interface_area
+    if area < 400:
+        out.append({"level": "warning", "text":
+                    f"Interface area {area:,.0f} A^2 is small. Crystal-packing contacts are typically "
+                    "< 400-500 A^2; biologically relevant interfaces are usually > 600 A^2 (Krissinel & Henrick 2007)."})
+    elif area < 700:
+        out.append({"level": "note", "text":
+                    f"Interface area {area:,.0f} A^2 is in the range where packing contacts and weak "
+                    "biological interfaces overlap; use the P-value, conservation and biochemistry to decide."})
+    else:
+        out.append({"level": "info", "text":
+                    f"Interface area {area:,.0f} A^2 ({gi.buried_total:,.0f} A^2 total buried) is typical of a "
+                    "stable biological interface (antibody-antigen and most obligate dimers bury 1,400-2,000 A^2 in total)."})
+    asym = abs(gi.buried_side1 - gi.buried_side2) / max(gi.buried_total, 1)
+    if asym > 0.15:
+        big = gi.label1 if gi.buried_side1 > gi.buried_side2 else gi.label2
+        out.append({"level": "note", "text":
+                    f"Burial is asymmetric: {big} buries {max(gi.buried_side1, gi.buried_side2):,.0f} A^2 vs "
+                    f"{min(gi.buried_side1, gi.buried_side2):,.0f} A^2 -- one side wraps around or inserts into the other."})
+    pvals = [p.p_value for p in gi.pairs if p.interface_area > 200]
+    if pvals:
+        pmin = min(pvals)
+        if pmin < 0.3:
+            out.append({"level": "info", "text":
+                        f"Hydrophobicity P-value {pmin:.2f} (lowest over the pairs): the interface is markedly more "
+                        "hydrophobic than a random surface patch, as expected for a specific interaction."})
+        elif pmin > 0.6:
+            out.append({"level": "note", "text":
+                        f"Hydrophobicity P-value {pmin:.2f}: the buried surface is no more hydrophobic than random "
+                        "surface. Polar / charged interfaces (many antibody epitopes, protein-DNA) score this way; "
+                        "it does not by itself mean the interface is not biological."})
+    if gi.dg_solv:
+        frac = gi.dg_apolar / gi.dg_solv if gi.dg_solv < 0 else float("nan")
+        if gi.dg_solv > 0:
+            out.append({"level": "note", "text":
+                        f"Solvation free-energy gain is positive ({gi.dg_solv:+.1f} kcal/mol): desolvating the polar / "
+                        "charged atoms costs more than burying the apolar ones gains. The interface is then held by "
+                        "hydrogen bonds, salt bridges and shape complementarity rather than the hydrophobic effect."})
+        elif frac > 2:
+            out.append({"level": "info", "text":
+                        f"The hydrophobic effect dominates: apolar burial contributes {gi.dg_apolar:+.1f} kcal/mol "
+                        f"against a polar desolvation cost of {gi.dg_polar:+.1f} kcal/mol."})
+    n_res = len(gi.residues_side1) + len(gi.residues_side2)
+    dens = (gi.n_hbonds + gi.n_salt_bridges) / max(area / 100, 1e-9)
+    if gi.n_hbonds + gi.n_salt_bridges == 0:
+        out.append({"level": "note", "text": "No hydrogen bonds or salt bridges: the interface is purely apolar / "
+                                              "van der Waals, or polar groups are bridged by water not present in the model."})
+    elif dens > 1.5:
+        out.append({"level": "info", "text":
+                    f"Polar-rich interface: {gi.n_hbonds} H-bonds and {gi.n_salt_bridges} salt bridges over "
+                    f"{area:,.0f} A^2 ({dens:.1f} per 100 A^2; ~1 per 100 A^2 is typical)."})
+    hot1 = [r for r in gi.residues_side1 if r.bsa >= 60]
+    hot2 = [r for r in gi.residues_side2 if r.bsa >= 60]
+    if hot1 or hot2:
+        out.append({"level": "info", "text":
+                    "Residues burying >= 60 A^2 (hot-spot candidates): "
+                    + (", ".join(f"{r.name.title()}{r.seq}{r.icode} ({gi.label1}, {r.bsa:.0f})" for r in hot1) or "none on " + gi.label1)
+                    + "; " + (", ".join(f"{r.name.title()}{r.seq}{r.icode} ({gi.label2}, {r.bsa:.0f})" for r in hot2) or "none on " + gi.label2)
+                    + ". Buried area is a proxy; alanine scanning or conservation is needed to confirm."})
+    arom = sum(r.bsa for r in gi.residues_side1 + gi.residues_side2 if r.name.upper() in ("TYR", "TRP", "PHE", "HIS"))
+    if gi.buried_total and arom / gi.buried_total > 0.3:
+        out.append({"level": "info", "text":
+                    f"Aromatic residues account for {arom / gi.buried_total:.0%} of the buried surface -- common in "
+                    "antibody paratopes (Tyr/Trp-rich CDRs) and in hot spots."})
+    if n_res and gi.n_pairs > 1:
+        out.append({"level": "info", "text":
+                    f"The group interface spans {gi.n_pairs} chain pairs; the per-pair table shows how the burial "
+                    "is distributed between them (e.g. heavy vs. light chain)."})
+    return out
+
+
+GUIDE = """
+### What the numbers mean
+
+**Interface area** (PISA convention) is *half* the total solvent-accessible
+surface buried when the two sides associate: `(BSA_side1 + BSA_side2) / 2`.
+Papers quote either this or the total; both are given here, say which one
+you use. Buried area is computed on heavy atoms with a 1.4 A probe and the
+NACCESS/Chothia radii PISA uses.
+
+**Buried surface per side** is the area each partner loses. For an antibody,
+"buries 850 A^2 on the antigen" is the epitope size; the paratope side is
+usually similar but not identical.
+
+**Solvation free-energy gain (dG_solv)** is the hydrophobic-effect estimate:
+sum over buried atoms of an atomic solvation parameter times buried area.
+Negative = favourable. It is **not a binding free energy** -- it omits
+electrostatics, entropy and conformational change -- and should be used to
+compare interfaces, not to predict K_d. The **apolar / polar split** shows
+how much comes from burying carbon/sulfur (favourable) versus desolvating
+polar and charged atoms (a cost).
+
+**Stabilisation energy** = dG_solv + PISA's per-bond terms (-0.44 kcal/mol
+per hydrogen bond, -0.15 per salt bridge, -4.0 per disulfide). Same caveat.
+
+**P-value** (hydrophobicity): probability that a random patch of the same
+size on the protein surface would be at least as hydrophobic. Low (< 0.3)
+means the interface is unusually hydrophobic, i.e. interaction-specific;
+high values are common for polar interfaces and are not a verdict on
+biological relevance.
+
+**CSS** (complexation significance score, 0-1) is PISA's heuristic for
+"is this interface part of the stable assembly"; fastPISA's value is a
+calibrated surrogate for ranking, not an exact reproduction.
+
+**Hydrogen bonds** follow PISA: donor-acceptor distance <= 3.89 A on heavy
+atoms with antecedent-angle checks and per-atom capacities. **Salt bridges**:
+Lys/Arg/His N to Asp/Glu O within 4.0 A. A charged pair can count in both
+tables, exactly as in PISA. **Contact classes** (pi-pi, cation-pi, CH-pi,
+van der Waals) follow COCOMAPS 2.0 within 5 A.
+
+### Typical values (for orientation, not thresholds)
+
+| interface | total buried | residues / side | H-bonds |
+|---|---|---|---|
+| crystal-packing contact | < 800 A^2 | < 10 | 0-3 |
+| antibody - protein antigen | 1,400 - 2,000 A^2 | 15 - 25 | 5 - 15 |
+| enzyme - inhibitor (e.g. barnase-barstar) | ~1,600 A^2 | ~20 | 10 - 15 |
+| obligate homodimer | 2,000 - 5,000 A^2 | 25 - 60 | 10 - 30 |
+
+### Things to check before quoting a number
+
+* **Missing residues / loops** in the model shrink the interface silently.
+* **Alternate conformations**: the first altloc is used.
+* **Hydrogens** are ignored for surfaces; explicit H improve H-bond geometry.
+* **Ligands / cofactors**: in `separate` mode (default, classic PISA) a heme
+  or glycan is its own molecule and is *not* part of "chain A"; use `merge`
+  to count a chain's bound groups with it.
+* **Waters** are excluded; water-mediated H-bonds are not counted.
+* **Symmetry mates** are not generated: only contacts present in the file.
+* **Numbering**: residue numbers are the author numbering in the file.
+
+### Suggested wording
+
+> The X-Y interface buries N A^2 of total solvent-accessible surface
+> (a A^2 on X, b A^2 on Y; PISA interface area N/2 A^2) and is stabilised by
+> h hydrogen bonds and s salt bridges (PISA criteria, computed with
+> fastPISA). The epitope comprises residues ... of X; the paratope ...
+"""
+
+
+# ---------------------------------------------------------------------------
+# Comparison of several complexes
+# ---------------------------------------------------------------------------
+def _nw_align(a: str, b: str, match: int = 2, mismatch: int = -1, gap: int = -2):
+    """Needleman-Wunsch global alignment; returns list of (i, j) index pairs."""
+    n, m = len(a), len(b)
+    S = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        S[i][0] = i * gap
+    for j in range(1, m + 1):
+        S[0][j] = j * gap
+    for i in range(1, n + 1):
+        ai = a[i - 1]
+        row, prev = S[i], S[i - 1]
+        for j in range(1, m + 1):
+            row[j] = max(prev[j - 1] + (match if ai == b[j - 1] else mismatch),
+                         prev[j] + gap, row[j - 1] + gap)
+    i, j, pairs = n, m, []
+    while i > 0 and j > 0:
+        if S[i][j] == S[i - 1][j - 1] + (match if a[i - 1] == b[j - 1] else mismatch):
+            pairs.append((i - 1, j - 1))
+            i, j = i - 1, j - 1
+        elif S[i][j] == S[i - 1][j] + gap:
+            i -= 1
+        else:
+            j -= 1
+    return pairs[::-1]
+
+
+def _chain_sequence(result, chain: str):
+    """[(seq, icode, one_letter)] of a chain from the parsed structure."""
+    st = result._parsed_structure()
+    seen = {}
+    for a in st.atoms:
+        if a.auth_asym_id.strip() != chain or a.element.strip().upper() in ("H", "D"):
+            continue
+        key = (a.res_seq, a.icode or "")
+        if key not in seen:
+            seen[key] = one_letter(a.res_name)
+    return [(str(k[0]), k[1], v) for k, v in sorted(seen.items(), key=lambda kv: (kv[0][0], kv[0][1]))]
+
+
+@dataclass
+class ComplexEntry:
+    name: str
+    gi: GroupInterface
+    result: object = None       # the analyzer (for sequences); optional
+
+
+@dataclass
+class Comparison:
+    entries: List[ComplexEntry]
+    side: int = 1                       # the SHARED side residues are aligned on
+    align: str = "auto"                 # "number" | "sequence" | "auto"
+    _maps: Dict[str, Dict[tuple, str]] = field(default_factory=dict)
+
+    @property
+    def gis(self) -> List[GroupInterface]:
+        return [e.gi for e in self.entries]
+
+    @property
+    def names(self) -> List[str]:
+        return [e.name for e in self.entries]
+
+    # -- residue keys shared across complexes ----------------------------------
+    def _residue_key_map(self, e: ComplexEntry, side: int) -> Dict[tuple, str]:
+        """Map (chain, seq, icode) of complex ``e`` -> common key string."""
+        cache_key = f"{e.name}:{side}"
+        if cache_key in self._maps:
+            return self._maps[cache_key]
+        ref = self.entries[0]
+        res_e = e.gi.residues_side1 if side == 1 else e.gi.residues_side2
+        mapping: Dict[tuple, str] = {}
+        use_seq = self.align == "sequence"
+        if self.align == "auto" and e is not ref and e.result is not None and ref.result is not None:
+            # numbering agrees if the residue names match at the same numbers
+            ref_res = ref.gi.residues_side1 if side == 1 else ref.gi.residues_side2
+            ref_names = {(r.chain, r.seq, r.icode): r.one for r in ref_res}
+            hits = [(r.chain, r.seq, r.icode) in ref_names and ref_names[(r.chain, r.seq, r.icode)] == r.one for r in res_e]
+            if hits and sum(hits) / len(hits) < 0.6:
+                use_seq = True
+        if use_seq and e is not ref and e.result is not None and ref.result is not None:
+            ref_chains = sorted({r.chain for r in (ref.gi.residues_side1 if side == 1 else ref.gi.residues_side2)})
+            for ch_e in sorted({r.chain for r in res_e}):
+                seq_e = _chain_sequence(e.result, ch_e)
+                best = None
+                for ch_r in ref_chains:
+                    seq_r = _chain_sequence(ref.result, ch_r)
+                    pairs = _nw_align("".join(x[2] for x in seq_e), "".join(x[2] for x in seq_r))
+                    ident = sum(seq_e[i][2] == seq_r[j][2] for i, j in pairs) / max(len(pairs), 1)
+                    if best is None or ident > best[0]:
+                        best = (ident, ch_r, seq_r, pairs)
+                if best is None:
+                    continue
+                _, ch_r, seq_r, pairs = best
+                for i, j in pairs:
+                    mapping[(ch_e, seq_e[i][0], seq_e[i][1])] = f"{ch_r}:{seq_r[j][2]}{seq_r[j][0]}{seq_r[j][1]}"
+        for r in res_e:
+            mapping.setdefault((r.chain, r.seq, r.icode), f"{r.chain}:{r.one}{r.seq}{r.icode}")
+        self._maps[cache_key] = mapping
+        return mapping
+
+    def residue_matrix(self, side: Optional[int] = None):
+        """DataFrame: rows = shared-side residues (common key), columns = complexes, values = BSA."""
+        import pandas as pd
+        side = side or self.side
+        data: Dict[str, Dict[str, float]] = {}
+        for e in self.entries:
+            m = self._residue_key_map(e, side)
+            col: Dict[str, float] = {}
+            for r in (e.gi.residues_side1 if side == 1 else e.gi.residues_side2):
+                k = m[(r.chain, r.seq, r.icode)]
+                col[k] = col.get(k, 0.0) + r.bsa
+            data[e.name] = col
+        df = pd.DataFrame(data).fillna(0.0)
+        if df.empty:
+            return df
+        df = df.loc[sorted(df.index, key=lambda s: (s.split(":")[0], _int("".join(ch for ch in s.split(":")[1][1:] if ch.isdigit()) or "0")))]
+        return df
+
+    def overlap_table(self, side: Optional[int] = None):
+        """Pairwise shared / unique residue counts and Jaccard on the shared side."""
+        import pandas as pd
+        side = side or self.side
+        sets = {}
+        for e in self.entries:
+            m = self._residue_key_map(e, side)
+            sets[e.name] = {m[(r.chain, r.seq, r.icode)] for r in (e.gi.residues_side1 if side == 1 else e.gi.residues_side2)}
+        rows = []
+        names = self.names
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                a, b = sets[names[i]], sets[names[j]]
+                inter, union = a & b, a | b
+                rows.append({"complex A": names[i], "complex B": names[j],
+                             "residues A": len(a), "residues B": len(b), "shared": len(inter),
+                             "only A": len(a - b), "only B": len(b - a),
+                             "Jaccard": round(len(inter) / len(union), 2) if union else 0.0,
+                             "shared residues": ", ".join(sorted(inter, key=lambda s: _int("".join(c for c in s if c.isdigit()) or "0")))})
+        return pd.DataFrame(rows)
+
+    def summary_table(self):
+        import pandas as pd
+        rows = []
+        for e in self.entries:
+            g = e.gi
+            rows.append({
+                "complex": e.name, "side 1": g.label1, "side 2": g.label2,
+                "chain pairs": g.n_pairs, "interface area (A^2)": g.interface_area,
+                "buried side 1 (A^2)": g.buried_side1, "buried side 2 (A^2)": g.buried_side2,
+                "total buried (A^2)": g.buried_total,
+                "dG solv (kcal/mol)": g.dg_solv, "dG apolar": g.dg_apolar, "dG polar": g.dg_polar,
+                "stab energy (kcal/mol)": g.stab_energy,
+                "H-bonds": g.n_hbonds, "salt bridges": g.n_salt_bridges, "disulfides": g.n_disulfides,
+                "residues side 1": len(g.residues_side1), "residues side 2": len(g.residues_side2),
+                "residue pairs": g.n_residue_pairs,
+            })
+        return pd.DataFrame(rows)
+
+    def prose(self) -> str:
+        if len(self.entries) < 2:
+            return ""
+        ref = self.entries[0]
+        out = []
+        for e in self.entries[1:]:
+            a, b = ref.gi, e.gi
+            d_tot = b.buried_total - a.buried_total
+            d1 = b.buried_side1 - a.buried_side1
+            ov = self.overlap_table(self.side)
+            row = ov[(ov["complex A"] == ref.name) & (ov["complex B"] == e.name)]
+            jac = float(row["Jaccard"].iloc[0]) if len(row) else 0.0
+            shared = int(row["shared"].iloc[0]) if len(row) else 0
+            side_label = a.label1 if self.side == 1 else a.label2
+            out.append(
+                f"Relative to {ref.name}, {e.name} buries {abs(d_tot):,.0f} A^2 {'more' if d_tot >= 0 else 'less'} "
+                f"surface in total ({abs(d1):,.0f} A^2 {'more' if d1 >= 0 else 'less'} on {b.label1}), "
+                f"with {b.n_hbonds} vs {a.n_hbonds} hydrogen bonds and {b.n_salt_bridges} vs {a.n_salt_bridges} "
+                f"salt bridges; its footprint on {side_label} shares {shared} residues with that of {ref.name} "
+                f"(Jaccard {jac:.2f}).")
+        return " ".join(out)
+
+
+def compare(entries: Sequence[ComplexEntry], side: int = 1, align: str = "auto") -> Comparison:
+    """Compare the group interfaces of several complexes on their shared side."""
+    if len(entries) < 2:
+        raise ValueError("need at least two complexes to compare")
+    return Comparison(list(entries), side=side, align=align)

@@ -9,4 +9,5 @@ matplotlib>=3.7
 freesasa>=2.2
 gemmi>=0.6
 openpyxl>=3.1
-py3Dmol>=2.0
+# comparison mode: chain detection + superposition across complexes
+pdb_align @ git+https://github.com/dzyla/pdb_align.git

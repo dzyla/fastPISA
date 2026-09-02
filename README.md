@@ -265,19 +265,32 @@ ana.filter_by_plddt(min_plddt=70.0) # keep confident interfaces only
 
 ## Interface Explorer app (Streamlit) — manuscript digests
 
-`app/streamlit_app.py` turns a structure plus a **chain-group selection**
-(e.g. antigen vs. antibody H+L) into the numbers a paper needs for the
+`app/streamlit_app.py` turns one or more complexes plus a **chain-group
+selection** (e.g. antigen vs. antibody H+L) into what a paper needs for the
 interface *between the groups*:
 
 - buried surface **per side** and in total ("buries 820 Å² on the antigen"),
-  interface area in the PISA convention;
-- ΔG solvation with its hydrophobic / polar split, stabilisation energy;
-- hydrogen bonds, salt bridges, disulfides (PISA rules) and COCOMAPS contact
-  classes; the epitope / paratope residue lists with BSA and ΔG each;
-- a contact-map figure and a residue bar plot (PNG/SVG), ChimeraX / PyMOL
-  selections, a 3D view;
-- Excel / CSV / JSON export and a **Results paragraph + Methods text** to
-  paste into the manuscript.
+  interface area in the PISA convention; ΔG solvation with its hydrophobic /
+  polar split; stabilisation energy; hydrogen bonds, salt bridges,
+  disulfides (PISA rules) and COCOMAPS contact classes;
+- automatic **interpretation** (packing-contact warning, hydrophobicity
+  P-value reading, asymmetric burial, hot-spot candidates, polar-rich
+  interfaces) and a **Guide** explaining every quantity, typical values and
+  the caveats to check before quoting a number;
+- **publication figures** (PNG/SVG, 300 dpi, colour-blind-safe): interface
+  footprint along the sequence, per-residue buried area with hot spots,
+  residue-class composition and energy decomposition, bond network, contact
+  map;
+- a **Mol\*** 3D view (both sides coloured, interface residues as
+  ball-and-stick, bonds drawn with their distances, optional surfaces and
+  labels) plus ChimeraX / PyMOL selections;
+- **comparison mode** for two or more complexes on the same antigen with
+  different binders: the shared chains are detected automatically by
+  sequence identity (`pdb_align`), footprints are aligned residue-by-residue
+  (by number, or by sequence when numbering differs), with side-by-side
+  numbers, overlap (shared / unique residues, Jaccard), footprint tracks and
+  a heatmap, prose, and all binders superposed on one antigen in Mol\*;
+- Excel / CSV / JSON export and Results / Methods text to paste.
 
 ```bash
 pip install -r app/requirements.txt
@@ -288,10 +301,12 @@ Deploy on Streamlit Community Cloud with main file `app/streamlit_app.py`.
 The same digest is a plain Python API:
 
 ```python
-from fastpisa.report import group_interface
+from fastpisa.report import group_interface, interpret, compare, ComplexEntry
 gi = group_interface(res, ["A"], ["H", "L"], "antigen", "Fab")
 gi.buried_side1, gi.n_hbonds, gi.residue_string(1)     # epitope as R59, H102, ...
-gi.results_paragraph(); gi.bonds_table(); gi.chimerax_command()
+gi.results_paragraph(); gi.bonds_table(); gi.chimerax_command(); interpret(gi)
+cmp = compare([ComplexEntry("Fab1", gi, res), ComplexEntry("Fab2", gi2, res2)])
+cmp.summary_table(); cmp.overlap_table(); cmp.residue_matrix(); cmp.prose()
 ```
 
 ---

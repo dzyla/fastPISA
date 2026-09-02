@@ -5,8 +5,12 @@ Upload a PDB/mmCIF (or type a PDB ID), assign chains to two groups (e.g.
 groups**: buried surface per side and in total, solvation / stabilisation
 energies with the hydrophobic-polar split, hydrogen bonds, salt bridges,
 disulfides and COCOMAPS contact classes, epitope / paratope residue lists,
-a contact-map figure, ChimeraX / PyMOL selections, Excel/CSV/JSON export,
-and a Results paragraph plus Methods text ready for a manuscript.
+publication figures (footprint, residue bars, composition, bond network,
+contact map), a Mol* 3D view, ChimeraX / PyMOL selections, Excel/CSV/JSON
+export, a Results paragraph plus Methods text, automatic interpretation and
+a guide -- and a comparison mode for several complexes sharing an antigen
+(chains matched by sequence with pdb_align, footprints aligned, binders
+superposed in one Mol* scene).
 
 Run locally from the repository root:
 

@@ -70,17 +70,22 @@ ana.summary(), ana.write_json("out/")
 
 ## Interface Explorer app (`app/`)
 
-`app/streamlit_app.py` (presentation only) + `app/app_helpers.py` (figures,
-py3Dmol HTML, Excel; no Streamlit calls, unit-testable) over
-`fastpisa/report.py::group_interface` -- the manuscript digest of the
-interface BETWEEN two chain groups (buried surface per side, energies,
-bond/contact counts, epitope/paratope residues, prose, viewer commands).
+`app/streamlit_app.py` (presentation only; session state holds a LIST of
+complexes) over pure modules: `fastpisa/report.py` (`group_interface` digest,
+`interpret` flags, `GUIDE`, `compare`/`Comparison` with NW sequence alignment
+for residue matching), `app/figures.py` (publication figures, Okabe-Ito),
+`app/molstar_view.py` (Mol* from the jsDelivr CDN driven by MolViewSpec JSON;
+structure passed as a data: URL; bonds as `distance_measurement` primitives;
+opacity is its own node, not a representation param -- MVS rejects it
+otherwise), `app/alignment.py` (pdb_align: `match_chains` for shared-antigen
+detection, `aligned_structure()` for superposition; app-only dependency).
 Numbers are sums over the chain-pair interfaces spanning the groups;
-P-value/CSS are per pair only (not additive). Deploy on Streamlit Cloud
-with main file `app/streamlit_app.py`; `app/requirements.txt` installs the
-package with `-e .`. Headless smoke: `streamlit.testing.v1.AppTest` (the
-chain-group data_editor cannot be driven by AppTest; test `report.py` and
-`app_helpers.py` directly instead).
+P-value/CSS per pair only. Deploy on Streamlit Cloud with main file
+`app/streamlit_app.py`; `app/requirements.txt` installs `-e .` and pdb_align
+from GitHub. Headless test: `streamlit.testing.v1.AppTest` with
+`st.session_state["complexes"]` pre-seeded (the chain-group data_editor
+cannot be driven by AppTest). Mol* was verified in headless Chromium via
+Playwright with `--use-angle=swiftshader` (WebGL needs it).
 
 ## Architecture in one line
 
