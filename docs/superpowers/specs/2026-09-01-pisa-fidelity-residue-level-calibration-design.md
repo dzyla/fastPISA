@@ -151,3 +151,14 @@ criteria (the target is the classic engine the reference data comes from).
 * **Hydrophobic/polar split** exposed as `solvation_energy_apolar/_polar`.
 * Committed tables: `features.json.gz` (4.9 MB, fine-typed) and
   `residue_fit.json.gz` (2.4 MB); the 10 MB audit table stays local.
+* **Ions (follow-up, same day).** PISA's per-element ion radii were read
+  off its lone-ion ASA exactly (Zn/Mg 1.39, Ca 1.20, K 2.75, Fe/Hg 1.90, Na
+  /Cu/Cl 1.75, Mn 1.73, Cd 1.58, Ni 1.63, I 1.98, Br 1.85, Gd 2.75). Ligand
+  interface area 9.2% -> 6.0%; residue-level fit RMS 1.13 -> 0.54; all-
+  interface dG out-of-fold r 0.83 -> 0.956, R^2 0.68 -> 0.914. Residual
+  limit: short-bond transition metals are still over-buried 12-35% relative
+  to PISA and nothing tested reproduces PISA's behaviour there.
+* **API:** `fastpisa.analyze()`, iterable/indexable result, readable
+  `Interface` repr and accessors (`hydrogen_bonds`, `salt_bridges`,
+  `contact_map`, `residues()`, DataFrame helpers). README rebuilt around
+  `examples/make_figures.py` output.

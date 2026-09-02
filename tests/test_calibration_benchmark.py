@@ -22,7 +22,7 @@ Thresholds sit just under the values measured at calibration time
     median |error| 0.33 kcal/mol, bias -0.01; P-value median |error| 0.060,
     Spearman 0.88.
     protein-nucleic acid (n=241): R^2 0.96, median 0.30.
-    all interfaces (n=6904): R^2 ~0.69.
+    all interfaces incl. ligands (n=6915): r 0.956, R^2 0.914, median 0.76.
 
 The ligand-involving regime is deliberately held to a much weaker bar. That
 is the measured truth (see the "ligand" test below and the note in
@@ -143,10 +143,11 @@ def test_solvation_energy_out_of_sample_protein_nucleic_acid(oof):
 
 
 def test_solvation_energy_out_of_sample_all(oof):
+    # measured 2026-09-01 after the ion radii: r 0.956, R^2 0.914, median 0.76
     m = dg_metrics(oof["dg"], oof["dg_ref"])
-    assert m["pearson"] > 0.80
-    assert m["r2_identity"] > 0.62
-    assert m["median_abs_err"] < 1.3
+    assert m["pearson"] > 0.94
+    assert m["r2_identity"] > 0.88
+    assert m["median_abs_err"] < 0.95
 
 
 def test_p_value_out_of_sample_polymer(oof):
@@ -231,7 +232,8 @@ def test_ligand_interface_area_error_is_documented_not_hidden():
     poly = np.array([r["is_polymer_pair"] for r in _records])
     rel = np.abs(af - ar) / np.maximum(ar, 1.0)
     assert np.median(rel[poly]) < 0.025
-    assert np.median(rel[~poly]) > 0.05, (
+    assert np.median(rel[~poly]) < 0.08          # 6.0% after the ion radii
+    assert np.median(rel[~poly]) > 0.03, (
         "ligand-pair interface areas now agree with PISA much better than "
         "documented -- update the accuracy claims in asp_table.py and README")
     big = ar > 300

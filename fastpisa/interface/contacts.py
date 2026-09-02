@@ -13,7 +13,7 @@ Atom-atom contacts are classified into:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -64,6 +64,30 @@ class AtomContact:
     atom1_chain: str
     atom2_chain: str
     bond_type: str = "other"  # "hbond", "salt_bridge", "disulfide", "other", "covalent"
+    atom1_seq: int = 0
+    atom2_seq: int = 0
+    atom1_icode: str = ""
+    atom2_icode: str = ""
+
+    @property
+    def label(self) -> str:
+        """Human-readable ``A:ARG83.NH1 -- B:GLU76.OE1  2.85 A``."""
+        return (f"{self.atom1_chain}:{self.atom1_residue}{self.atom1_seq}"
+                f"{self.atom1_icode}.{self.atom1_name.strip()} -- "
+                f"{self.atom2_chain}:{self.atom2_residue}{self.atom2_seq}"
+                f"{self.atom2_icode}.{self.atom2_name.strip()}  "
+                f"{self.distance:.2f} A")
+
+    def as_dict(self) -> dict:
+        return {
+            "chain_1": self.atom1_chain, "residue_1": self.atom1_residue,
+            "seq_1": self.atom1_seq, "icode_1": self.atom1_icode or "",
+            "atom_1": self.atom1_name.strip(),
+            "chain_2": self.atom2_chain, "residue_2": self.atom2_residue,
+            "seq_2": self.atom2_seq, "icode_2": self.atom2_icode or "",
+            "atom_2": self.atom2_name.strip(),
+            "distance": round(self.distance, 3), "bond_type": self.bond_type,
+        }
 
 
 @dataclass
@@ -97,6 +121,92 @@ class Interface:
     # the ASP sigmas and the P-value model offline. See
     # fastpisa/reference/calibrate.py.
     calibration: dict = field(default_factory=dict)
+
+    # -- readable accessors -------------------------------------------------
+    @property
+    def chains(self) -> tuple:
+        """``(chain_id_1, chain_id_2)`` as PISA labels them (``[ZN]A:301``
+        for a hetero group)."""
+        return tuple(m.get("chain_id", "?") for m in self.molecules)
+
+    @property
+    def label(self) -> str:
+        return " + ".join(self.chains)
+
+    @property
+    def hydrogen_bonds(self) -> List[AtomContact]:
+        """PISA-style hydrogen bonds (donor/acceptor heavy-atom pairs)."""
+        return [c for c in self.contacts if c.bond_type == "hbond"]
+
+    @property
+    def salt_bridges(self) -> List[AtomContact]:
+        return [c for c in self.contacts if c.bond_type == "salt_bridge"]
+
+    @property
+    def disulfides(self) -> List[AtomContact]:
+        return [c for c in self.contacts if c.bond_type == "disulfide"]
+
+    @property
+    def contact_map(self) -> List[dict]:
+        """COCOMAPS residue-residue contact map (``combined``/``cocomaps``
+        modes): one dict per residue pair with ``min_distance``,
+        ``num_contacts``, ``interaction_counts`` and ``dominant_interaction``.
+        Empty in ``pisa`` mode."""
+        return list(self.cocomaps.get("contact_map", []))
+
+    @property
+    def interaction_population(self) -> dict:
+        """COCOMAPS interaction-class counts over all atom pairs."""
+        return dict(self.cocomaps.get("interaction_population", {}))
+
+    def residues(self, side: Optional[int] = None) -> List[dict]:
+        """Interface residues with ASA / BSA / solvation energy.
+
+        ``side`` 1 or 2 selects a molecule; None returns both, each dict
+        carrying ``molecule`` (1 or 2), ``chain``, ``name``, ``seq``,
+        ``icode``, ``asa``, ``bsa``, ``solvation_energy``.
+        """
+        out = []
+        for k, m in enumerate(self.molecules, 1):
+            if side is not None and k != side:
+                continue
+            names = m.get("residue_label_comp_ids", [])
+            seqs = m.get("residue_seq_ids", [])
+            ics = m.get("residue_ins_codes", [])
+            asa = m.get("accessible_surface_areas", [])
+            bsa = m.get("buried_surface_areas", [])
+            solv = m.get("solvation_energies", [])
+            for j in range(len(names)):
+                out.append({
+                    "molecule": k, "chain": m.get("chain_id", ""),
+                    "name": names[j], "seq": seqs[j],
+                    "icode": (ics[j] or "") if j < len(ics) else "",
+                    "asa": asa[j] if j < len(asa) else None,
+                    "bsa": bsa[j] if j < len(bsa) else None,
+                    "solvation_energy": solv[j] if j < len(solv) else None,
+                })
+        return out
+
+    def bonds_dataframe(self):
+        """All bonded contacts (H-bonds, salt bridges, disulfides) as a
+        pandas DataFrame."""
+        import pandas as pd
+        return pd.DataFrame([c.as_dict() for c in self.contacts
+                             if c.bond_type in ("hbond", "salt_bridge", "disulfide")])
+
+    def contact_map_dataframe(self):
+        """The residue-residue contact map as a pandas DataFrame."""
+        import pandas as pd
+        return pd.DataFrame(self.contact_map)
+
+    def __repr__(self) -> str:
+        return (f"<Interface {self.interface_id}: {self.label} | "
+                f"area {self.interface_area:.0f} A^2, dG {self.solvation_energy:+.1f} "
+                f"(apolar {self.solvation_energy_apolar:+.1f}, polar "
+                f"{self.solvation_energy_polar:+.1f}), stab {self.stabilization_energy:+.1f} "
+                f"kcal/mol, P {self.p_value:.2f}, CSS {self.css:.2f} | "
+                f"{self.number_hydrogen_bonds} H-bonds, {self.number_salt_bridges} "
+                f"salt bridges, {self.number_disulfide_bonds} SS>")
 
     def to_bond_dict(self, bond_type: str) -> dict:
         """Convert contacts of a given type to a bond dict for output."""
@@ -356,6 +466,8 @@ def find_contacts(
                 atom1_chain=a1.auth_asym_id,
                 atom2_chain=a2.auth_asym_id,
                 bond_type=btype,
+                atom1_seq=a1.res_seq, atom2_seq=a2.res_seq,
+                atom1_icode=a1.icode or "", atom2_icode=a2.icode or "",
             ))
 
     return contacts

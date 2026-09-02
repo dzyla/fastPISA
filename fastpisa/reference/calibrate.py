@@ -744,7 +744,7 @@ def scheme_b(fine: str) -> str:
     sugar / base / phosphate; hetero atoms keep the incumbent classes.
     """
     if fine == "H" or fine.startswith("het:"):
-        return fine if fine == "H" else fine[4:]
+        return fine if fine == "H" else fine.split(":")[1]
     res, atom = fine.split(":", 1)
     el = atom[0] if not (res == "MSE" and atom == "SE") else "SE"
     if res in _NA_RES:
@@ -874,8 +874,11 @@ def fitted_fine_types(rows, class_of=class_of_fine,
     for _, r in rows:
         for t, a in r["bsa_by_type"].items():
             tot[t] = tot.get(t, 0.0) + a
+    # a hetero fine type earns a deviation only when it is element-resolved
+    # ("het:MET:MG"); "het:C" IS its class and would be collinear with it
     return sorted(t for t, a in tot.items()
-                  if a > min_area and not t.startswith("het:") and t != "H"
+                  if a > min_area and t != "H"
+                  and (not t.startswith("het:") or t.count(":") == 2)
                   and class_of(t) not in PINNED_CLASSES)
 
 

@@ -45,6 +45,14 @@ VDW_RADII = {
 # ---------------------------------------------------------------------------
 SURFACE_RADII = {
     "C": 1.87, "N": 1.65, "O": 1.40, "S": 1.85, "P": 1.90, "SE": 1.90,
+    # Ions, recovered EXACTLY from PISA: a lone ion's isolated ASA is
+    # 4*pi*(r + 1.4)^2, and PISA's per-residue ASA for each monatomic ion is
+    # constant to 0.0% across the benchmark, so r = sqrt(ASA/4pi) - 1.4 to
+    # two decimals (2026-09-01, 674 entries). Note Ca at 1.20 A (PISA's own
+    # value, adopted as-is: "follow the same rules") and K at 2.75 A.
+    "MG": 1.39, "ZN": 1.39, "CA": 1.20, "NA": 1.75, "K": 2.75, "CL": 1.75,
+    "BR": 1.85, "I": 1.98, "MN": 1.73, "FE": 1.90, "CO": 1.90, "NI": 1.63,
+    "CU": 1.75, "CD": 1.58, "HG": 1.90, "GD": 2.75,
 }
 _SP2_CARBON = frozenset({"C"})  # backbone carbonyl C (every residue)
 _SP2_SIDECHAIN = frozenset({

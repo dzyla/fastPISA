@@ -115,6 +115,34 @@ class PISAInterfaceAnalyzer:
         self._plddt_map: dict = {}
 
     # -- public API --------------------------------------------------------
+    # -- pythonic conveniences --------------------------------------------
+    def __iter__(self):
+        return iter(self.interfaces)
+
+    def __len__(self) -> int:
+        return len(self.interfaces)
+
+    def __getitem__(self, i):
+        return self.interfaces[i]
+
+    def __repr__(self) -> str:
+        n = len(self.interfaces)
+        head = (f"<fastPISA {self.pdb_id}: {n} interface{'s' if n != 1 else ''}"
+                f" ({self.mode} mode)>")
+        if not n:
+            return head
+        body = "\n".join("  " + repr(i) for i in self.interfaces[:12])
+        more = f"\n  ... {n - 12} more" if n > 12 else ""
+        return head + "\n" + body + more
+
+    def interface_between(self, chain_a: str, chain_b: str):
+        """The interface between two chains (PISA labels), or None."""
+        want = {chain_a, chain_b}
+        for i in self.interfaces:
+            if set(i.chains) == want:
+                return i
+        return None
+
     def analyze(self, recompute: bool = True) -> dict:
         """Run the analysis and populate :attr:`interfaces` and :attr:`result`.
 
@@ -521,12 +549,6 @@ class PISAInterfaceAnalyzer:
         iface = self.get_interface(interface_id)
         return plot_contact_heatmap(iface, self._parsed_atoms(), out_path=out_path, **kwargs)
 
-    def __repr__(self) -> str:
-        state = "unanalyzed"
-        if self.interfaces:
-            state = f"{len(self.interfaces)} interfaces"
-        return f"<PISAInterfaceAnalyzer {self.path.name} [{self.mode}] {state}>"
-
 
 def analyze_interface(
     path: str,
@@ -559,3 +581,15 @@ def analyze_interface(
     """
     ana = PISAInterfaceAnalyzer(path, pdb_id=pdb_id, mode=mode, **kwargs)
     return ana.analyze()
+
+def analyze(path, pdb_id: str = None, **kwargs) -> "PISAInterfaceAnalyzer":
+    """One-call analysis: ``fastpisa.analyze("x.pdb")`` -> analyzer with
+    ``.interfaces`` populated (iterate it, index it, ``.to_dataframe()``,
+    ``.write_json()``). ``kwargs`` are :class:`PISAInterfaceAnalyzer` options
+    (``mode``, ``ligand_mode``, ``min_css``, ...)."""
+    import os as _os
+    if pdb_id is None:
+        pdb_id = _os.path.basename(str(path)).split(".")[0]
+    ana = PISAInterfaceAnalyzer(path, pdb_id=pdb_id, **kwargs)
+    ana.analyze()
+    return ana

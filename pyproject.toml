@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fastpisa"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local PISA interface analysis with an optional COCOMAPS 2.0 contact-map mode"
 readme = "README.md"
 requires-python = ">=3.9"

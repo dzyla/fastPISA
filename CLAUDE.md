@@ -35,6 +35,8 @@ ana.summary(), ana.write_json("out/")
   (`tests/test_vs_cocomaps2.py`), both from cached reference data
 - `python examples/calibrate.py` — audit/refit the fitted constants (offline,
   seconds); `--emit-sigma` prints a paste-ready SIGMA block
+- `python examples/make_figures.py` — regenerate the README comparison
+  figures (docs/figures/) from the committed tables
 - `python examples/compare_vs_pisa.py` — head-to-head vs original PISA
   (add entries with `--fetch <pdbid>`; `--assembly-entries <ids>` compares
   recent entries via the PDBe PISA 2.0 JSON API; network only for fetching)
@@ -51,9 +53,11 @@ ana.summary(), ana.write_json("out/")
   CSS Spearman 0.75;
   protein-NA (n=241) R^2 0.96. H-bond ATOM PAIRS vs PISA's list: precision
   0.958 / recall 0.952; salt bridges 0.985 / 0.979; disulfides exact.
-  Ligand-involving (n=4590) is much weaker -- dG r 0.81 overall, area 9%
-  median -- and is documented as indicative, not calibrated. Blind on 20
-  recent (2023-24) assemblies (earlier constants): dG r 0.978, stab 0.986.
+  All interfaces incl. ligands (n=6915): dG r 0.956 / R^2 0.914 / median
+  0.76; ligand-pair area 6.0% median (oxo-anions, halides, Na/Ca, organics
+  within a few %; short-bond transition metals Mg/Mn/Fe/Cu still 12-35%
+  over-buried vs PISA -- documented limit). Blind on 20 recent (2023-24)
+  assemblies (earlier constants): dG r 0.978, stab 0.986.
 - `tests/test_vs_pdbe_pisa.py` (legacy 36 entries) is IN-SAMPLE -- a
   breakage regression, not a generalisation measure. The out-of-sample
   guard is `tests/test_calibration_benchmark.py`, which asserts the grouped
@@ -94,9 +98,16 @@ are thin wrappers.
   typing, the surface code, or interface detection.
 - **Surface radii are the NACCESS/Chothia set** (`surface_radius()` in
   `surface/shrake_rupley.py`: sp3 C 1.87, sp2/aromatic C 1.76, N 1.65,
-  O 1.40, S 1.85) -- recovered empirically as what PISA uses. They are for
-  ASA ONLY; `get_vdw_radius()` (COCOMAPS contact classification, validated
+  O 1.40, S 1.85) -- recovered empirically as what PISA uses -- plus
+  per-element ION radii read off PISA's own lone-ion ASA (Zn/Mg 1.39,
+  Ca 1.20, K 2.75, Fe/Hg 1.90, ...; `SURFACE_RADII`). They are for ASA
+  ONLY; `get_vdw_radius()` (COCOMAPS contact classification, validated
   identical to COCOMAPS 2.0) is a different convention. Don't merge them.
+  Metal fine types are element-resolved (`het:MET:MG`) so each ion has its
+  own shrunk sigma deviation. What we could NOT reproduce: PISA buries
+  short-bond transition metals (Mg/Mn/Fe/Cu, 1.8-2.2 A coordination) and
+  their coordinating residue 12-35% LESS than probe-rolling ASA does; no
+  radius, point density, altloc or neighbour-exclusion variant matches it.
 - **Residue numbers can be negative.** The PDB parser used `isdigit()` and
   collapsed "-4" onto 0, silently merging residues (DNA numbered about a
   centre, expression tags). Fixed; `tests/test_pisa_fidelity.py` guards it.
