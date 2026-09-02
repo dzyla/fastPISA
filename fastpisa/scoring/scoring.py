@@ -64,19 +64,29 @@ def calculate_p_value_pisa(
     z = (solvation_energy - mean) / np.sqrt(var)
     # The independent-atom variance underestimates the true patch variance
     # (buried areas are correlated within residues), which over-spreads z.
-    # A single deflation constant fitted against EBI PISA p-values over the
-    # polymer-polymer interfaces of the 36-entry benchmark corrects for it
-    # (median |p error| 0.11, Spearman 0.73 on those interfaces). PISA's
-    # p-values for small-ligand/ion interfaces follow different statistics
-    # and are NOT reproduced by this model -- treat ligand-interface
-    # p-values as indicative only.
+    # A single deflation constant corrects for it. PISA's p-values for
+    # small-ligand/ion interfaces follow different statistics and are NOT
+    # reproduced by this model -- treat ligand-interface p-values as
+    # indicative only.
     z *= P_VALUE_Z_SCALE
     p = float(0.5 * (1 + erf(z / np.sqrt(2))))
     return min(max(p, 0.0), 1.0)
 
 
-# Effective-z deflation for correlated buried patches (see above).
-P_VALUE_Z_SCALE = 0.219
+#: Effective-z deflation for correlated buried patches (see above).
+#:
+#: Refitted 2026-09-01 on the sampled benchmark (674 entries / 6881
+#: interfaces) by minimising the MEDIAN |P - P_ref| -- a median rather than a
+#: squared loss, because PISA's ligand/ion p-values follow different
+#: statistics and behave as outliers that would otherwise steer this
+#: one-parameter fit.
+#:
+#: The previous value, 0.219, came from the 36-entry hand-picked benchmark
+#: and was badly off. Grouped 10-fold cross-validation over polymer-polymer
+#: interfaces (n = 2303): median |P - P_ref| improves 0.115 -> 0.067 (-42%)
+#: and Spearman 0.818 -> 0.851. Over ligand-involving interfaces the
+#: agreement stays poor either way (Spearman ~0.33), as expected.
+P_VALUE_Z_SCALE = 0.46
 
 
 def calculate_css_pisa(solvation_energy: float, interface_area: float) -> float:
@@ -84,15 +94,25 @@ def calculate_css_pisa(solvation_energy: float, interface_area: float) -> float:
 
     PISA's true CSS comes from its crystal-wide assembly analysis (which
     needs symmetry-mate enumeration -- out of fastPISA's scope). This
-    logistic surrogate was fitted to EBI PISA CSS values over the 36-entry
-    reference benchmark (262 interfaces):
+    logistic surrogate was fitted to EBI PISA CSS values:
 
         css = sigmoid(-6.9088 - 0.1699 * dG_solv + 0.8485 * ln(1 + area))
 
-    Leave-one-PDB-out performance: Spearman 0.68 vs PISA's CSS, mean
-    absolute error 0.22, and 79% agreement on the css >= 0.5
-    biological-vs-packing call. Treat it as a well-behaved [0, 1]
-    significance score, not an exact reproduction.
+    RE-EXAMINED 2026-09-01 against the 674-entry sampled benchmark and
+    DELIBERATELY LEFT UNCHANGED. Refitting the three coefficients on 6881
+    interfaces lowers the mean absolute error (0.134 -> 0.123) but *degrades
+    rank agreement*, which is what this score is actually used for:
+    Spearman falls 0.609 -> 0.567 overall and 0.736 -> 0.713 on
+    polymer-polymer interfaces under grouped 10-fold cross-validation. The
+    log-loss objective a fractional logistic regression minimises is not the
+    ranking objective, so a "better fit" is the wrong trade here; the
+    incumbent coefficients are kept.
+
+    Honest out-of-sample performance of these coefficients, measured on the
+    638 sampled entries that never informed them: Spearman 0.73 vs PISA's
+    CSS on polymer-polymer interfaces (0.60 including ligand interfaces),
+    mean absolute error 0.21. Treat it as a well-behaved [0, 1] significance
+    score, not an exact reproduction.
     """
     x = (-6.9088
          - 0.1699 * solvation_energy

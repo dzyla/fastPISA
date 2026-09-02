@@ -14,32 +14,54 @@ same interfaces** for a structure.
 | `pisa` | Thermo/surface analysis: ASA/BSA, interface areas, ΔG, P-value, CSS, H-bonds / salt bridges / disulfides | PDBe PISA `assembly.json` + `interfaces.json` |
 | `cocomaps` | Residue–residue contact map with atomic interaction-type classification (H-bond, salt bridge, pi-pi, cation-pi, ch-pi, …) | Superset of the PISA schema + `interface_contact_map` per interface |
 
-**Validated against original PISA** (EBI PDBe PISA service, 262 identity
-interfaces from 36 diverse PDB entries — proteases, antibodies, receptors,
-hemoglobin, protein–DNA/RNA, glycans, cofactors, ions; reproduce with
-`python examples/compare_vs_pisa.py`):
+**Validated against original PISA** on **6881 identity interfaces from 674
+PDB entries**. 400 of those entries are a seeded random draw from a stated
+sampling frame (X-ray, ≤ 3.0 Å, ≥ 2 polymer chains, ≤ 12000 atoms, within the
+EBI PISA CGI's coverage), de-duplicated to one entry per 30% sequence-identity
+cluster so over-deposited proteins cannot dominate; the other 36 are the
+original hand-picked benchmark. Reproduce with
+`python examples/build_calibration_set.py` then `python examples/calibrate.py`.
 
-| Quantity | All interfaces (n=262) | Polymer–polymer only (n=153)* |
+Every figure below is **grouped 10-fold cross-validated** — each fold is
+fitted without the PDB entries it is scored on, because interfaces within an
+entry share chains and chemistry and are not independent observations:
+
+| Quantity | Polymer–polymer (n=2303)* | Ligand-involving (n=4578) |
 |---|---|---|
-| Interface area | median rel. error 2.2% (1.3% > 300 Å²) | 1.5% |
-| Solvation ΔG | Pearson 0.956, median error 1.05 kcal/mol | **Pearson 0.980** |
-| Stabilization energy | Pearson 0.977 (per-bond constants recovered exactly) | **Pearson 0.988** |
-| P-value | median error 0.12 | Spearman 0.72 |
-| CSS | Spearman 0.71 (calibrated surrogate) | Spearman 0.75 |
+| Interface area | median rel. error **1.8%** (1.5% > 300 Å²) | 12% |
+| Solvation ΔG | **Pearson 0.971**, R² about 1:1 **0.940**, median error **0.74 kcal/mol**, bias +0.15 | Pearson 0.81 overall, R² 0.65, heavy tail |
+| Stabilization energy | Pearson 0.990 (per-bond constants recovered exactly) | — |
+| P-value | median error **0.067**, Spearman **0.85** | Spearman 0.33 |
+| CSS | Spearman 0.73 (calibrated surrogate) | Spearman 0.60 |
 | H-bond counts | 91% within ±1 | — |
 | Salt bridges | mean diff 0.08 per interface | — |
 | Disulfides | 100% exact | — |
 
 \* the cryo-EM / AlphaFold-model regime (protein/nucleic-acid chain pairs, no
-small-molecule ligand side). Verified out-of-sample twice: on 15 classic
-entries the fit had never seen (polymer–polymer ΔG Pearson 0.977), and on
-**20 recent (2023–2024) depositions** compared blind against the modern PDBe
-PISA 2.0 JSON API on biological-assembly coordinates — 87 interfaces, ΔG
-Pearson **0.978**, stab **0.986**, area 3.0% median, P-value error 0.11
-(`python examples/compare_vs_pisa.py --assembly-entries <ids>`). H-bond
-counts differ more vs PISA *2.0* (64% within ±1) than vs classic PISA (91%)
-— the two PISA versions themselves disagree on H-bond criteria; fastPISA is
-calibrated to the classic engine.
+small-molecule ligand side) — the regime this tool is built for, and the one
+that holds up: the *previous* constants, tested blind on the 638 entries they
+had never seen, still scored Pearson 0.963 / R² 0.926 there.
+
+**Ligand-involving interfaces are markedly less accurate, and earlier
+versions of this README overstated them.** The old "Pearson 0.956 over all
+interfaces" came from a 36-entry hand-picked set whose ligand cases were
+unrepresentatively easy; on an unbiased sample the honest number is 0.81.
+The cause is geometric, not thermodynamic — ion and small-additive interface
+*areas* differ from PISA by 12% at the median before any energy constant is
+applied (metals such as Zn/K/Mg and cryo-additives such as acetate, iodide,
+MPD dominate the tail). Treat ligand-interface energies as indicative.
+
+Correlation is reported next to R² about the 1:1 line and the bias on
+purpose: interface sizes span two orders of magnitude, so Pearson *r* looks
+excellent even when the scale is systematically wrong.
+
+Separately, on **20 recent (2023–2024) depositions** compared blind against
+the modern PDBe PISA 2.0 JSON API on biological-assembly coordinates — 87
+interfaces, ΔG Pearson **0.978**, stab **0.986**, area 3.0% median, P-value
+error 0.11 (`python examples/compare_vs_pisa.py --assembly-entries <ids>`).
+H-bond counts differ more vs PISA *2.0* (64% within ±1) than vs classic PISA
+(91%) — the two PISA versions themselves disagree on H-bond criteria;
+fastPISA is calibrated to the classic engine.
 
 **Validated against COCOMAPS 2.0** (the actual standalone tool, Zenodo
 `10.5281/zenodo.17390665`, run on the same inputs with REDUCE-added

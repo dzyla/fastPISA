@@ -87,6 +87,11 @@ class Interface:
     molecules: List[dict] = field(default_factory=list)
     # COCOMAPS mode extension: contact map + interaction population
     cocomaps: dict = field(default_factory=dict)
+    # Calibration extension (only populated when run_core is called with
+    # collect_calibration=True): the sufficient statistics needed to refit
+    # the ASP sigmas and the P-value model offline. See
+    # fastpisa/reference/calibrate.py.
+    calibration: dict = field(default_factory=dict)
 
     def to_bond_dict(self, bond_type: str) -> dict:
         """Convert contacts of a given type to a bond dict for output."""

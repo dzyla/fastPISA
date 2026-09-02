@@ -38,3 +38,13 @@ out/
 # Large assembly-coordinate cache (refetched on demand)
 tests/data/reference/assemblies/
 
+
+# Large PISA reference cache for the sampled calibration benchmark (~100 MB
+# of EBI PISA XML + RCSB coordinates; refetch with
+# examples/build_calibration_set.py). The 36 legacy benchmark entries were
+# committed before this rule and stay tracked -- git ignores .gitignore for
+# files already in the index -- so tests/test_vs_pdbe_pisa.py still runs
+# offline from a clean clone. What reproduces the *fits* is the distilled
+# feature table in tests/data/calibration/, which is small and committed.
+tests/data/reference/*.pisa.xml.gz
+tests/data/reference/pdb/

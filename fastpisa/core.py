@@ -76,12 +76,19 @@ def run_core(
     mode: str = "combined",
     interaction_cutoff: float = 5.0,
     ligand_mode: str = "separate",
+    collect_calibration: bool = False,
 ) -> CoreState:
     """Run the shared analysis once and return the populated interfaces.
 
     ``ligand_mode``: ``"separate"`` (classic PISA -- every bound hetero group
     is its own monomer) or ``"merge"`` (jsPISA-on-assembly convention -- a
     chain's bound ligands/cofactors belong to that chain's molecule).
+
+    ``collect_calibration``: also record, on each interface's ``calibration``
+    dict, the sufficient statistics for refitting the ASP sigmas and the
+    P-value model (buried area per solvation class, surface-area per class,
+    and the buried-patch moments). Off by default; it costs one extra pass
+    over the interface atoms and adds no physics.
     """
     if mode not in MODES:
         raise ValueError(f"Unknown mode: {mode!r} (expected one of {MODES})")
@@ -164,17 +171,37 @@ def run_core(
     sigma_all = np.array([
         get_asp(a.atom_name, a.element, a.res_name) for a in atoms])
 
+    # Per-atom solvation class (calibration only): dG_solv is LINEAR in the
+    # per-class sigmas, so the buried area summed per class is a sufficient
+    # statistic for refitting them.
+    class_all = None
+    if collect_calibration:
+        from fastpisa.energy.asp_table import atom_class
+        class_all = [
+            "H" if a.element.strip().upper() in ("H", "D")
+            else atom_class(a.atom_name, a.element, a.res_name)
+            for a in atoms]
+
     # Per-molecule surface statistics (sigma + isolated ASA of exposed
     # atoms), precomputed once for the P-value model.
     surf_stats = []
+    surf_class_asa: List[Dict[str, float]] = []
     for mi in range(n_molecules):
         ids = np.array(mol_atom_ids[mi], dtype=int)
         if ids.size == 0:
             surf_stats.append((np.zeros(0), np.zeros(0)))
+            if collect_calibration:
+                surf_class_asa.append({})
             continue
         a_iso = np.array([asa_alone.get((mi, gi), 0.0) for gi in ids])
         exposed = a_iso > 0.0
         surf_stats.append((sigma_all[ids[exposed]], a_iso[exposed]))
+        if collect_calibration:
+            per_class: Dict[str, float] = {}
+            for gi, a_i in zip(ids[exposed], a_iso[exposed]):
+                c = class_all[gi]
+                per_class[c] = per_class.get(c, 0.0) + float(a_i)
+            surf_class_asa.append(per_class)
 
     # 7. Detect interfaces between all molecule pairs.
     #
@@ -320,6 +347,27 @@ def run_core(
             iface.number_disulfide_bonds = n_ss
             iface.number_covalent_bonds = 0
             iface.number_other_bonds = n_other
+
+            if collect_calibration:
+                bsa_by_class: Dict[str, float] = {}
+                for gi in interface_atom_set:
+                    b = bsa_pair.get(gi, 0.0)
+                    if b:
+                        c = class_all[gi]
+                        bsa_by_class[c] = bsa_by_class.get(c, 0.0) + b
+                surf_by_class: Dict[str, float] = {}
+                for mi in (mol1, mol2):
+                    for c, a_c in surf_class_asa[mi].items():
+                        surf_by_class[c] = surf_by_class.get(c, 0.0) + a_c
+                b_vals = np.fromiter(bsa_pair.values(), dtype=float,
+                                     count=len(bsa_pair))
+                iface.calibration = {
+                    "bsa_by_class": bsa_by_class,
+                    "surf_asa_by_class": surf_by_class,
+                    "b_sum": float(b_vals.sum()),
+                    "b_sq_sum": float((b_vals ** 2).sum()),
+                    "n_buried_atoms": int(b_vals.size),
+                }
 
             if want_cocomaps:
                 from fastpisa.cocomaps.contact_map import aggregate_residue_pairs

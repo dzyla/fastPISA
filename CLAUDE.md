@@ -33,17 +33,30 @@ ana.summary(), ana.write_json("out/")
 - `pytest tests/ -q` — full suite incl. the offline accuracy regressions vs
   original PISA (`tests/test_vs_pdbe_pisa.py`) and vs COCOMAPS 2.0
   (`tests/test_vs_cocomaps2.py`), both from cached reference data
+- `python examples/calibrate.py` — audit/refit the fitted constants (offline,
+  seconds); `--emit-sigma` prints a paste-ready SIGMA block
 - `python examples/compare_vs_pisa.py` — head-to-head vs original PISA
   (add entries with `--fetch <pdbid>`; `--assembly-entries <ids>` compares
   recent entries via the PDBe PISA 2.0 JSON API; network only for fetching)
 
-## Validation status (2026-08-30; don't regress these)
+## Validation status (2026-09-01; don't regress these)
 
-- vs original PISA (262 identity interfaces, 36 entries): area 2.2% median
-  (1.3% >300 A^2); dG r 0.956; stab r 0.977; H-bonds 91% within +-1; salt
-  0.08 mean diff; disulfides exact. Polymer-polymer subset (cryo-EM regime,
-  n=153): area 1.5%, dG r 0.980, stab r 0.988. Blind on 20 recent (2023-24)
-  assemblies: dG r 0.978, stab 0.986.
+- vs original PISA, **6881 identity interfaces from 674 entries** (400 a
+  seeded random draw from a stated sampling frame, de-duplicated at 30%
+  sequence identity; 36 legacy hand-picked). All figures are **grouped
+  10-fold CV**, folds never splitting a PDB entry:
+  polymer-polymer (n=2303) area 1.8% median, dG r 0.971 / R^2(1:1) 0.940 /
+  median |err| 0.74 kcal/mol, stab r 0.990, P-value median |err| 0.067
+  (Spearman 0.85), CSS Spearman 0.73; ligand-involving (n=4578) is much
+  weaker -- dG r 0.81 overall, area 12% median -- and is documented as
+  indicative, not calibrated. H-bonds 91% within +-1; salt 0.08 mean diff;
+  disulfides exact. Blind on 20 recent (2023-24) assemblies: dG r 0.978,
+  stab 0.986.
+- `tests/test_vs_pdbe_pisa.py` (legacy 36 entries) is IN-SAMPLE -- a
+  breakage regression, not a generalisation measure. The out-of-sample
+  guard is `tests/test_calibration_benchmark.py`, which asserts the grouped
+  CV numbers above and runs offline in ~3 s from the committed feature
+  table.
 - vs COCOMAPS 2.0 standalone (same inputs, REDUCE hydrogens): contact maps
   IDENTICAL (1ktz 30/30, 1vfb 28/28, 1aay protein-DNA 57/57 residue pairs;
   interface residue sets identical); COCOMAPS-convention salt bridges match
@@ -57,12 +70,24 @@ are thin wrappers.
 
 ## Conventions & non-obvious traps (READ before editing)
 
-- **Calibration is load-bearing.** `energy/asp_table.py` (sigma per atom
-  class), `energy/energy.py` (E_HBOND/E_SALT_BRIDGE/E_DISULFIDE — recovered
-  EXACTLY from PISA), `scoring/scoring.py` (P_VALUE_Z_SCALE, CSS logistic) are
-  fitted against the EBI reference; `tests/test_vs_pdbe_pisa.py` pins the
-  accuracy. Don't tweak constants without re-running
-  `examples/compare_vs_pisa.py`.
+- **Calibration is load-bearing, and now reproducible.** `energy/asp_table.py`
+  (sigma per atom class) and `scoring/scoring.py` (P_VALUE_Z_SCALE, CSS
+  logistic) are FITTED; `energy/energy.py` (E_HBOND/E_SALT_BRIDGE/
+  E_DISULFIDE) was recovered EXACTLY from PISA and is not a fit. Refit and
+  audit with `python examples/calibrate.py` (offline, from
+  `tests/data/calibration/features.json.gz`);
+  `tests/test_calibration_benchmark.py::test_shipped_constants_match_a_full_refit`
+  fails if the shipped sigmas ever drift from what the data refits to. Don't
+  tweak constants by hand.
+- **The feature table is sufficient statistics, not coordinates.** dG_solv is
+  linear in the sigmas, so per-class buried areas + the buried-patch moments
+  reproduce the pipeline's dG and P-value EXACTLY. That is why a 674-entry
+  benchmark fits in 746 kB and its regression test runs in 3 s. Regenerate
+  with `examples/extract_calibration_features.py` after any change to
+  `atom_class`, the surface code, or interface detection.
+- **CSS was re-examined and deliberately NOT refitted**: a refit lowers MAE
+  but degrades rank agreement, which is what CSS is used for. Don't "improve"
+  it on log-loss.
 - **Interfaces are defined by buried area (pair dASA > 0), not by 5 A atom
   contacts** — PISA semantics. The shadow cutoff (2*r_max + 2*probe) screens
   candidate pairs; per-pair ASA is evaluated only near the interface.
@@ -87,6 +112,14 @@ are thin wrappers.
   residues like MSE/CCS/PTR — splitting them out fabricates interfaces).
 - **Water is excluded from interface search** by default.
 - **Element = PDB columns 77–78.** Never derive from atom-name prefix.
+- **Solvation classes must not silently swallow chemistry.** `atom_class`
+  maps every heavy atom to a key of `SIGMA`; the catch-all `X` has sigma 0,
+  so anything routed there contributes NOTHING to dG. Halogens used to land
+  there (a buried chloride scored 0.0 against PISA's -12 kcal/mol) and now
+  have their own fitted `HAL` class. `P` exists as a class but is pinned to
+  0: phosphorus buries a median 1.5 A^2 (the OP oxygens shield it) and its
+  fitted value is indistinguishable from zero. Before adding an element to
+  `X`, check whether the benchmark can fit it instead.
 - **FreeSASA:** do NOT call `Parameters.setAlgorithm("ShrakeRupley")`
   (segfaults on single-atom inputs). `calcCoord` wants a flat 3N coord array;
   `atom_indices` maps output indices only — callers pre-subset `atoms`.
@@ -113,4 +146,8 @@ python examples/compare_vs_pisa.py        # accuracy table vs original PISA
   license-walled — H-bond deliverables are validated against PISA instead.
 - PDBe PISA 2.0 JSON API (recent entries, biological assemblies):
   `https://www.ebi.ac.uk/pdbe/api/pisa/interfaces/{pdbid}/{assembly}`.
+- Sampling frame + seed for the 400-entry random draw:
+  `fastpisa/reference/sampling.py`; the drawn list and frame parameters are
+  recorded in `tests/data/calibration/entries.json`. The RCSB search API is
+  used for 30%-identity cluster representatives.
 - Design spec: docs/superpowers/specs/2026-08-29-pisa-parity-combined-mode-design.md
