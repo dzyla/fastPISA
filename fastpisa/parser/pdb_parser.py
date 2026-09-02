@@ -268,7 +268,7 @@ def parse_mmcif(path: str) -> PDBStructure:
         )
 
     structure = PDBStructure()
-    doc = gemmi.cif.read(path)
+    doc = gemmi.cif.read(str(path))   # gemmi rejects pathlib.Path
     block = doc.sole_block()
 
     # Header

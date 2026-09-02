@@ -68,6 +68,20 @@ ana.summary(), ana.write_json("out/")
   interface residue sets identical); COCOMAPS-convention salt bridges match
   per residue pair.
 
+## Interface Explorer app (`app/`)
+
+`app/streamlit_app.py` (presentation only) + `app/app_helpers.py` (figures,
+py3Dmol HTML, Excel; no Streamlit calls, unit-testable) over
+`fastpisa/report.py::group_interface` -- the manuscript digest of the
+interface BETWEEN two chain groups (buried surface per side, energies,
+bond/contact counts, epitope/paratope residues, prose, viewer commands).
+Numbers are sums over the chain-pair interfaces spanning the groups;
+P-value/CSS are per pair only (not additive). Deploy on Streamlit Cloud
+with main file `app/streamlit_app.py`; `app/requirements.txt` installs the
+package with `-e .`. Headless smoke: `streamlit.testing.v1.AppTest` (the
+chain-group data_editor cannot be driven by AppTest; test `report.py` and
+`app_helpers.py` directly instead).
+
 ## Architecture in one line
 
 ALL modes (`combined`/`pisa`/`cocomaps`) run `fastpisa/core.py` exactly once —
