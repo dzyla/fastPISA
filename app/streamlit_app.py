@@ -25,12 +25,25 @@ import pandas as pd
 import streamlit as st
 
 import fastpisa
-from fastpisa.report import (
+import fastpisa.report as _report
+
+# Streamlit re-reads this script on every run but keeps already-imported
+# modules; on Streamlit Cloud the editable-installed fastpisa package lives
+# outside the watched app folder, so after a redeploy the old module can
+# linger in the running process. Reload it when it lacks a symbol we need.
+if not hasattr(_report, "chain_residue_axis"):
+    import importlib
+    _report = importlib.reload(_report)
+from fastpisa.report import (  # noqa: E402
     GUIDE, ComplexEntry, chain_inventory, chain_residue_axis, chimerax_render_script, compare,
     group_interface, interpret, proximity_flags, pymol_render_script,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+for _m in ("figures", "molstar_view", "alignment", "app_helpers"):
+    if _m in sys.modules:                       # same stale-module guard for the app's own modules
+        import importlib
+        importlib.reload(sys.modules[_m])
 import figures as F  # noqa: E402
 from alignment import detect_shared_chains, structure_text, superpose  # noqa: E402
 from app_helpers import excel_bytes  # noqa: E402

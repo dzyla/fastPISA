@@ -19,7 +19,17 @@ Run locally from the repository root:
 
 Deploy on Streamlit Community Cloud: point the app at this repository with
 **main file path** `app/streamlit_app.py`; `app/requirements.txt` installs
-fastPISA from the repository root.
+fastPISA from the repository root. In *Advanced settings* choose
+**Python 3.12** (the repository's `.python-version` says the same): the
+comparison mode's dependency `pdb_align` pins `numpy<2`, which has no wheels
+for Python 3.13+, and FreeSASA wheels lag new interpreters too.
+
+After pushing a new version, use **Reboot app** in the Cloud menu once:
+Streamlit re-reads the script on every run but keeps already-imported
+modules, and the editable-installed `fastpisa` package sits outside the
+watched app folder, so a redeployed process can otherwise keep an old
+`fastpisa.report` in memory (`ImportError: cannot import name ...`). The app
+also reloads such modules itself when it detects a missing symbol.
 
 All numbers come from `fastpisa.report.group_interface`, which is a plain
 Python API you can also call from a notebook.
