@@ -46,7 +46,7 @@ for _m in ("figures", "molstar_view", "alignment", "app_helpers"):
         importlib.reload(sys.modules[_m])
 import figures as F  # noqa: E402
 from alignment import detect_shared_chains, structure_text, superpose  # noqa: E402
-from app_helpers import excel_bytes  # noqa: E402
+from app_helpers import apply_shared_side, excel_bytes  # noqa: E402
 from molstar_view import comparison_view_html, interface_view_html  # noqa: E402
 
 st.set_page_config(page_title="fastPISA Interface Explorer", page_icon="🧬", layout="wide")
@@ -148,21 +148,21 @@ with st.sidebar:
             st.session_state.complexes.append({"name": name, "path": path, "label1": "antigen",
                                                "label2": "binder", "group1": [], "group2": []})
     if "opts" not in st.session_state:
-        st.session_state.opts = {"ligand_mode": "separate", "exclude_water": True, "min_css": 0.0}
+        st.session_state.opts = {"ligand_mode": "separate", "min_css": 0.0}
     with st.form("options"):
         st.header("Analysis options")
         f_lig = st.selectbox("Ligands / cofactors", ["separate", "merge"],
                              index=["separate", "merge"].index(st.session_state.opts["ligand_mode"]),
                              help="separate: every hetero group is its own molecule (classic PISA). "
                                   "merge: a chain's bound ligands belong to that chain.")
-        f_wat = st.checkbox("Exclude water", value=st.session_state.opts["exclude_water"])
+        st.caption("Ordered water is excluded from interface detection. Water-mediated contacts are not inferred.")
         f_css = st.slider("Minimum CSS to keep an interface", 0.0, 1.0, st.session_state.opts["min_css"], 0.05)
         if st.form_submit_button("Apply options"):
-            st.session_state.opts = {"ligand_mode": f_lig, "exclude_water": f_wat, "min_css": float(f_css)}
+            st.session_state.opts = {"ligand_mode": f_lig, "min_css": float(f_css)}
             for c in st.session_state.complexes:
                 c.pop("gi", None)
     ligand_mode = st.session_state.opts["ligand_mode"]
-    exclude_water = st.session_state.opts["exclude_water"]
+    exclude_water = True
     min_css = st.session_state.opts["min_css"]
 
 complexes = st.session_state.complexes
@@ -208,9 +208,7 @@ with st.sidebar:
                 cands = tuple(r["label"] for r in inv if r["class"] != "Ligand")
                 matches = _detect_cached(ref["path"], cx["path"],
                                          tuple(c for c in ref["group1"] if not c.startswith("[")), cands)
-                cx["group1"] = [m for _, m, _ in matches]
-                cx["group2"] = [r["label"] for r in inv if r["class"] != "Ligand" and r["label"] not in cx["group1"]]
-                cx["label1"], cx["label2"] = ref["label1"], ref["label2"]
+                apply_shared_side(cx, ref, inv, matches)
                 st.rerun()
             if st.button("Remove", key=f"rm_{i}"):
                 complexes.pop(i)
@@ -312,7 +310,7 @@ with tab["Bonds & contacts"]:
     else:
         st.dataframe(sub.drop(columns=["chain 1", "seq 1", "chain 2", "seq 2"]) if len(sub) else sub,
                      width="stretch", hide_index=True)
-    st.markdown("**COCOMAPS interaction classes** (atom pairs within 5 Å)")
+    st.markdown("**Implemented COCOMAPS-compatible interaction classes** (atom pairs within 5 Å)")
     pop = gi.interaction_population
     if pop:
         st.dataframe(pd.DataFrame([{"class": k.replace("_", " "), "atom pairs": v}
@@ -341,9 +339,9 @@ with tab["3D (Mol*)"]:
     height = c[3].slider("Height", 400, 900, 620, 20)
     txt, fmt = structure_text(cx["path"])
     others = [r["chain"] for r in cx["inventory"]]
-    st.components.v1.html(interface_view_html(txt, fmt, gi, height=height, show_surface=show_surface,
-                                              show_bonds=show_bonds, show_labels=show_labels,
-                                              other_chains=others), height=height + 40)
+    st.iframe(interface_view_html(txt, fmt, gi, height=height, show_surface=show_surface,
+                                  show_bonds=show_bonds, show_labels=show_labels,
+                                  other_chains=others), height=height + 40)
     st.caption("Mol* viewer. Interface residues as ball-and-stick; bonds as dashed lines labelled with the "
                "donor-acceptor distance. Use the expand icon for a full-screen view; the selection tool "
                "identifies residues.")
@@ -419,13 +417,13 @@ if "Compare" in tab:
                         st.warning(f"{e.name}: superposition failed ({exc})")
                 if rows:
                     st.dataframe(pd.DataFrame(rows), hide_index=True)
-                st.components.v1.html(comparison_view_html(scene, height=640), height=680)
+                st.iframe(comparison_view_html(scene, height=640), height=680)
 
 # ---- Export ----------------------------------------------------------------------
 with tab["Export"]:
     sheets = {"summary": pd.DataFrame([{k: v for k, v in gi.to_dict().items() if not k.startswith("residues_")}]),
               "chain pairs": gi.pair_table(), "bonds": gi.bonds_table(),
-              f"{label1} residues": gi.residue_table(1), f"{label2} residues": gi.residue_table(2),
+              "side 1 residues": gi.residue_table(1), "side 2 residues": gi.residue_table(2),
               "contact map": gi.contact_map_table(), "all interfaces": res.to_dataframe()}
     c = st.columns(3)
     c[0].download_button("Excel workbook (all tables)", excel_bytes(sheets), f"{res.pdb_id}_interface.xlsx",

@@ -25,7 +25,8 @@ Conventions (PISA's, so the numbers are comparable with the literature):
   P-values and CSS are not, and are reported per pair only;
 * bond counts follow PISA's rules (independent predicates: a charged pair
   that is also an H-bond counts in both tables); COCOMAPS contact classes
-  are counted over atom pairs within 5 A.
+  are an implemented COCOMAPS-compatible subset counted over atom pairs
+  within 5 A.
 """
 
 from __future__ import annotations
@@ -142,6 +143,7 @@ class GroupInterface:
     #: every cross-group chain pair with its closest approach (see
     #: cross_pair_proximity); filled by group_interface
     pair_proximity: List[dict] = field(default_factory=list)
+    provenance: Dict[str, object] = field(default_factory=dict)
 
     # -- derived -----------------------------------------------------------
     @property
@@ -158,14 +160,25 @@ class GroupInterface:
         return not self.pairs
 
     def bonds(self, kinds: Sequence[str] = ("hbond", "salt_bridge", "disulfide")) -> list:
-        """AtomContact objects of the given kinds, oriented side1 -> side2."""
+        """Independent PISA bond rows, oriented side1 -> side2.
+
+        A charged hydrogen-bonded atom pair appears twice: once with each
+        applicable ``bond_type``. The source contact's dominant compatibility
+        label is not mutated.
+        """
+        import copy
+
         g1 = {_chain_of(c) for c in self.group1}
         out = []
         for p in self.pairs:
             for c in p.contacts:
-                if c.bond_type not in kinds:
-                    continue
-                out.append(_orient(c, g1))
+                classes = c.bond_types or ((c.bond_type,) if c.bond_type != "other" else ())
+                for kind in classes:
+                    if kind not in kinds:
+                        continue
+                    row = copy.copy(c)
+                    row.bond_type = kind
+                    out.append(_orient(row, g1))
         return out
 
     # -- tables --------------------------------------------------------------
@@ -263,7 +276,7 @@ class GroupInterface:
             bonds.append(f"{self.n_salt_bridges} salt bridge{'s' if self.n_salt_bridges != 1 else ''}")
         if self.n_disulfides:
             bonds.append(f"{self.n_disulfides} disulfide{'s' if self.n_disulfides != 1 else ''}")
-        bond_txt = (" and is stabilised by " + _join(bonds)) if bonds else ""
+        bond_txt = (" and includes " + _join(bonds)) if bonds else ""
         return (f"The {self.label1}-{self.label2} interface buries a total of "
                 f"{self.buried_total:,.0f} A^2 of solvent-accessible surface "
                 f"({self.buried_side1:,.0f} A^2 on {self.label1} and {self.buried_side2:,.0f} A^2 "
@@ -291,24 +304,47 @@ class GroupInterface:
             extra += f" It comprises {self.n_pairs} chain-pair interfaces: {_join(parts)}."
         return s + extra
 
-    @staticmethod
-    def methods_paragraph() -> str:
+    def methods_paragraph(self) -> str:
         from fastpisa import __version__
+        from fastpisa.surface.freesasa_backend import surface_backend_info
+
+        surface = surface_backend_info()
+        p = {
+            "fastpisa_version": __version__,
+            "probe_radius_A": 1.4,
+            "point_density": 480,
+            "contact_cutoff_A": 5.0,
+            "ligand_mode": "separate",
+            "exclude_water": True,
+            "surface_backend": surface["backend"],
+            "surface_algorithm": surface["algorithm"],
+            "surface_backend_version": surface["version"],
+        }
+        p.update(self.provenance)
+        backend_version = (
+            f" {p['surface_backend_version']}" if p.get("surface_backend_version") else ""
+        )
         return (
-            f"Interfaces were analysed with fastPISA {__version__}, a Python "
+            f"Interfaces were analysed with fastPISA {p['fastpisa_version']}, a Python "
             "re-implementation of the PISA algorithm (Krissinel & Henrick, J. Mol. "
             "Biol. 2007) calibrated against the PDBe PISA service. Solvent-accessible "
-            "surface areas were computed with a 1.4 A probe and NACCESS/Chothia atomic "
-            "radii on heavy atoms; an interface is defined by the surface buried on "
+            f"surface areas were computed with a {p['probe_radius_A']:g} A probe, "
+            "NACCESS/Chothia atomic radii, and heavy atoms only, using surface backend "
+            f"{p['surface_backend']}{backend_version} ({p['surface_algorithm']}; requested "
+            f"point density {p['point_density']}). An interface is defined by the surface buried on "
             "association, its area being half the total buried on both molecules. "
             "The solvation free-energy gain is the sum of per-atom solvation parameters "
             "times buried area; the stabilisation energy adds PISA's per-bond terms for "
             "hydrogen bonds, salt bridges and disulfides. Hydrogen bonds were assigned "
             "on donor-acceptor distance (<= 3.89 A) and antecedent geometry, salt "
             "bridges between oppositely charged side-chain atoms within 4.0 A, following "
-            "PISA. Residue-residue contact maps and interaction classes (pi-pi, "
-            "cation-pi, CH-pi, van der Waals) follow COCOMAPS 2.0 (Chawla et al., "
-            "Bioinformatics 2025) within a 5 A cutoff.")
+            "PISA. Residue-residue contact maps and the implemented subset of interaction "
+            "classes (including pi-pi, cation-pi, CH-pi and van der Waals) use "
+            f"COCOMAPS-compatible conventions (Chawla et al., Bioinformatics 2025) within "
+            f"a {p['contact_cutoff_A']:g} A cutoff. Only the first coordinate model was "
+            "analysed; crystallographic symmetry mates and biological-assembly operators "
+            f"were not generated. Ligand mode was {p['ligand_mode']}; ordered water was "
+            f"{'excluded' if p['exclude_water'] else 'included'}.")
 
     # -- viewer commands -------------------------------------------------------
     def _side_residues(self):
@@ -358,6 +394,7 @@ class GroupInterface:
             "n_hbonds": self.n_hbonds, "n_salt_bridges": self.n_salt_bridges,
             "n_disulfides": self.n_disulfides, "n_residue_pairs": self.n_residue_pairs,
             "interaction_population": dict(self.interaction_population),
+            "provenance": dict(self.provenance),
             "residues_side1": [r.__dict__ for r in self.residues_side1],
             "residues_side2": [r.__dict__ for r in self.residues_side2],
         }
@@ -444,6 +481,8 @@ def group_interface(result, group1: Iterable[str], group2: Iterable[str],
     if set(g1) & set(g2):
         raise ValueError(f"chains in both groups: {sorted(set(g1) & set(g2))}")
     gi = GroupInterface(label1, label2, g1, g2)
+    if hasattr(result, "analysis_provenance"):
+        gi.provenance = result.analysis_provenance()
     pop: Dict[str, int] = {}
     merged1: Dict[tuple, ResidueEntry] = {}
     merged2: Dict[tuple, ResidueEntry] = {}
@@ -467,7 +506,10 @@ def group_interface(result, group1: Iterable[str], group2: Iterable[str],
             pop[k] = pop.get(k, 0) + int(v)
         bond_counts: Dict[tuple, int] = {}
         for c in iface.contacts:
-            if c.bond_type in ("hbond", "salt_bridge", "disulfide"):
+            classes = c.bond_types or (
+                (c.bond_type,) if c.bond_type in ("hbond", "salt_bridge", "disulfide") else ()
+            )
+            for _kind in classes:
                 for ch, seq, ic in ((c.atom1_chain, str(c.atom1_seq), c.atom1_icode or ""),
                                     (c.atom2_chain, str(c.atom2_seq), c.atom2_icode or "")):
                     bond_counts[(ch, seq, ic)] = bond_counts.get((ch, seq, ic), 0) + 1
@@ -477,6 +519,9 @@ def group_interface(result, group1: Iterable[str], group2: Iterable[str],
             for r in _molecule_residues(iface, side, label, bond_counts):
                 key = (r.chain, r.seq, r.icode)
                 if key in store:      # same residue buried against two partners
+                    # Isolated whole-residue ASA is a property of the
+                    # molecule, so retain it once; BSA/dG are pair-specific.
+                    store[key].asa = max(store[key].asa, r.asa)
                     store[key].bsa += r.bsa
                     store[key].dg += r.dg
                     store[key].n_bonds += r.n_bonds
@@ -522,6 +567,11 @@ def interpret(gi: "GroupInterface") -> List[dict]:
     out: List[dict] = []
     if gi.empty:
         return [{"level": "warning", "text": "No interface between the two groups: no surface is buried on association."}]
+    if any(label.startswith("[") for label in list(gi.group1) + list(gi.group2)):
+        out.append({"level": "warning", "text":
+                    "This selection contains a separately analysed ligand or ion. fastPISA's strongest "
+                    "PDBe PISA calibration is for polymer-polymer interfaces; ligand/ion surface and "
+                    "energy estimates showed larger errors and should be treated as approximate."})
     area = gi.interface_area
     if area < 400:
         out.append({"level": "warning", "text":
@@ -533,8 +583,9 @@ def interpret(gi: "GroupInterface") -> List[dict]:
                     "biological interfaces overlap; use the P-value, conservation and biochemistry to decide."})
     else:
         out.append({"level": "info", "text":
-                    f"Interface area {area:,.0f} A^2 ({gi.buried_total:,.0f} A^2 total buried) is typical of a "
-                    "stable biological interface (antibody-antigen and most obligate dimers bury 1,400-2,000 A^2 in total)."})
+                    f"Interface area {area:,.0f} A^2 ({gi.buried_total:,.0f} A^2 total buried) is compatible "
+                    "with a substantial biological contact. Area alone does not establish biological relevance; "
+                    "use assembly context, conservation and biochemical evidence."})
     asym = abs(gi.buried_side1 - gi.buried_side2) / max(gi.buried_total, 1)
     if asym > 0.15:
         big = gi.label1 if gi.buried_side1 > gi.buried_side2 else gi.label2
@@ -547,7 +598,8 @@ def interpret(gi: "GroupInterface") -> List[dict]:
         if pmin < 0.3:
             out.append({"level": "info", "text":
                         f"Hydrophobicity P-value {pmin:.2f} (lowest over the pairs): the interface is markedly more "
-                        "hydrophobic than a random surface patch, as expected for a specific interaction."})
+                        "hydrophobic than a random surface patch. This supports a non-random hydrophobic contact "
+                        "but does not establish interaction specificity by itself."})
         elif pmin > 0.6:
             out.append({"level": "note", "text":
                         f"Hydrophobicity P-value {pmin:.2f}: the buried surface is no more hydrophobic than random "
@@ -558,8 +610,8 @@ def interpret(gi: "GroupInterface") -> List[dict]:
         if gi.dg_solv > 0:
             out.append({"level": "note", "text":
                         f"Solvation free-energy gain is positive ({gi.dg_solv:+.1f} kcal/mol): desolvating the polar / "
-                        "charged atoms costs more than burying the apolar ones gains. The interface is then held by "
-                        "hydrogen bonds, salt bridges and shape complementarity rather than the hydrophobic effect."})
+                        "charged atoms costs more than burying the apolar ones gains. Favourable association would "
+                        "therefore require contributions not represented by this solvation term."})
         elif frac > 2:
             out.append({"level": "info", "text":
                         f"The hydrophobic effect dominates: apolar burial contributes {gi.dg_apolar:+.1f} kcal/mol "
@@ -567,8 +619,8 @@ def interpret(gi: "GroupInterface") -> List[dict]:
     n_res = len(gi.residues_side1) + len(gi.residues_side2)
     dens = (gi.n_hbonds + gi.n_salt_bridges) / max(area / 100, 1e-9)
     if gi.n_hbonds + gi.n_salt_bridges == 0:
-        out.append({"level": "note", "text": "No hydrogen bonds or salt bridges: the interface is purely apolar / "
-                                              "van der Waals, or polar groups are bridged by water not present in the model."})
+        out.append({"level": "note", "text": "No direct hydrogen bonds or salt bridges were assigned. Contacts may "
+                                              "be apolar / van der Waals or involve unmodelled water mediation."})
     elif dens > 1.5:
         out.append({"level": "info", "text":
                     f"Polar-rich interface: {gi.n_hbonds} H-bonds and {gi.n_salt_bridges} salt bridges over "
@@ -577,15 +629,15 @@ def interpret(gi: "GroupInterface") -> List[dict]:
     hot2 = [r for r in gi.residues_side2 if r.bsa >= 60]
     if hot1 or hot2:
         out.append({"level": "info", "text":
-                    "Residues burying >= 60 A^2 (hot-spot candidates): "
+                    "High-burial residues (>= 60 A^2; not energetic hot spots): "
                     + (", ".join(f"{r.name.title()}{r.seq}{r.icode} ({gi.label1}, {r.bsa:.0f})" for r in hot1) or "none on " + gi.label1)
                     + "; " + (", ".join(f"{r.name.title()}{r.seq}{r.icode} ({gi.label2}, {r.bsa:.0f})" for r in hot2) or "none on " + gi.label2)
-                    + ". Buried area is a proxy; alanine scanning or conservation is needed to confirm."})
+                    + ". Mutational measurements are required to identify energetic hot spots."})
     arom = sum(r.bsa for r in gi.residues_side1 + gi.residues_side2 if r.name.upper() in ("TYR", "TRP", "PHE", "HIS"))
     if gi.buried_total and arom / gi.buried_total > 0.3:
         out.append({"level": "info", "text":
                     f"Aromatic residues account for {arom / gi.buried_total:.0%} of the buried surface -- common in "
-                    "antibody paratopes (Tyr/Trp-rich CDRs) and in hot spots."})
+                    "antibody paratopes (Tyr/Trp-rich CDRs), but not evidence of an energetic hot spot by itself."})
     if n_res and gi.n_pairs > 1:
         out.append({"level": "info", "text":
                     f"The group interface spans {gi.n_pairs} chain pairs; the per-pair table shows how the burial "
@@ -619,9 +671,9 @@ per hydrogen bond, -0.15 per salt bridge, -4.0 per disulfide). Same caveat.
 
 **P-value** (hydrophobicity): probability that a random patch of the same
 size on the protein surface would be at least as hydrophobic. Low (< 0.3)
-means the interface is unusually hydrophobic, i.e. interaction-specific;
-high values are common for polar interfaces and are not a verdict on
-biological relevance.
+means the interface is unusually hydrophobic; it does not prove interaction
+specificity. High values are common for polar interfaces and are not a
+verdict on biological relevance.
 
 **CSS** (complexation significance score, 0-1) is PISA's heuristic for
 "is this interface part of the stable assembly"; fastPISA's value is a
@@ -630,8 +682,9 @@ calibrated surrogate for ranking, not an exact reproduction.
 **Hydrogen bonds** follow PISA: donor-acceptor distance <= 3.89 A on heavy
 atoms with antecedent-angle checks and per-atom capacities. **Salt bridges**:
 Lys/Arg/His N to Asp/Glu O within 4.0 A. A charged pair can count in both
-tables, exactly as in PISA. **Contact classes** (pi-pi, cation-pi, CH-pi,
-van der Waals) follow COCOMAPS 2.0 within 5 A.
+tables, exactly as in PISA. **Contact classes** are an implemented subset
+(including pi-pi, cation-pi, CH-pi and van der Waals) using
+COCOMAPS-compatible conventions within 5 A.
 
 ### Typical values (for orientation, not thresholds)
 
@@ -645,7 +698,8 @@ van der Waals) follow COCOMAPS 2.0 within 5 A.
 ### Things to check before quoting a number
 
 * **Missing residues / loops** in the model shrink the interface silently.
-* **Alternate conformations**: the first altloc is used.
+* **Alternate conformations**: blank altloc is preferred; otherwise the
+  highest-occupancy conformer is used with an alphabetical tie-break.
 * **Hydrogens** are ignored for surfaces; explicit H improve H-bond geometry.
 * **Ligands / cofactors**: in `separate` mode (default, classic PISA) a heme
   or glycan is its own molecule and is *not* part of "chain A"; use `merge`

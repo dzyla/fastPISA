@@ -205,6 +205,26 @@ class PISAInterfaceAnalyzer:
         """Number of detected interfaces (must call :meth:`analyze` first)."""
         return len(self.interfaces)
 
+    def analysis_provenance(self) -> dict:
+        """Runtime options and coordinate scope for reports and exports."""
+        from fastpisa import __version__
+        from fastpisa.surface.freesasa_backend import surface_backend_info
+
+        surface = surface_backend_info()
+        return {
+            "fastpisa_version": __version__,
+            "input_file": self.path.name,
+            "coordinate_scope": "first model only; no symmetry generation",
+            "probe_radius_A": self.probe_radius,
+            "point_density": self.point_density,
+            "contact_cutoff_A": self.interface_cutoff,
+            "ligand_mode": self.ligand_mode,
+            "exclude_water": self.exclude_water,
+            "surface_backend": surface["backend"],
+            "surface_algorithm": surface["algorithm"],
+            "surface_backend_version": surface["version"],
+        }
+
     # -- output ------------------------------------------------------------
     def write_json(self, output_dir: str = ".") -> Dict[str, str]:
         """Write the two JSON documents to ``output_dir``.
@@ -241,7 +261,7 @@ class PISAInterfaceAnalyzer:
         :class:`ImportError` is raised.
         """
         import pandas as pd
-        self.analyze()
+        self.analyze(recompute=False)
         rows = []
         for i in self.interfaces:
             rows.append({
@@ -271,7 +291,7 @@ class PISAInterfaceAnalyzer:
         solvation_energy. Requires ``pandas`` (see :meth:`to_dataframe`).
         """
         import pandas as pd
-        self.analyze()
+        self.analyze(recompute=False)
         rows = []
         for i in self.interfaces:
             for imol, mol in enumerate(i.molecules, start=1):
@@ -302,7 +322,7 @@ class PISAInterfaceAnalyzer:
         entry is ``{chain, seq, residue, bsa, solvation_energy, interfaces}``.
         Values are summed over every interface the residue participates in.
         """
-        self.analyze()
+        self.analyze(recompute=False)
         by = by.lower()
         if by not in ("bsa", "solv"):
             raise ValueError(f"by must be 'bsa' or 'solv', got {by!r}")
@@ -338,7 +358,7 @@ class PISAInterfaceAnalyzer:
 
     def summary(self) -> str:
         """Return a human-readable summary string of the analysis."""
-        self.analyze()
+        self.analyze(recompute=False)
         lines = [
             f"fastPISA ({self.mode} mode)",
             f"  pdb_id            : {self.pdb_id}",
@@ -360,8 +380,8 @@ class PISAInterfaceAnalyzer:
     def _parsed_structure(self):
         """Return the parsed structure, parsed and cached once."""
         if not hasattr(self, "_structure_cache"):
-            from fastpisa.parser.pdb_parser import parse_pdb, parse_mmcif
-            if str(self.path).endswith((".cif", ".cif.gz")):
+            from fastpisa.parser.pdb_parser import parse_pdb, parse_mmcif, is_mmcif_path
+            if is_mmcif_path(self.path):
                 self._structure_cache = parse_mmcif(self.path)
             else:
                 self._structure_cache = parse_pdb(self.path)
@@ -388,7 +408,7 @@ class PISAInterfaceAnalyzer:
         from fastpisa.pae import interface_pae_score
         if self.pae_data is None or not self.pae_data.has_pae:
             raise ValueError("load_pae(...) must be called before pae_scores")
-        self.analyze()
+        self.analyze(recompute=False)
         atoms = self._parsed_atoms()
         return {
             i.interface_id: interface_pae_score(i, atoms, self._pae_map, self.pae_data)
@@ -462,7 +482,7 @@ class PISAInterfaceAnalyzer:
         from fastpisa.pae import interface_plddt
         if not self._plddt_map:
             raise ValueError("load_plddt(...) must be called before plddt_scores")
-        self.analyze()
+        self.analyze(recompute=False)
         atoms = self._parsed_atoms()
         return {
             i.interface_id: interface_plddt(i, atoms, self._plddt_map)
@@ -530,13 +550,13 @@ class PISAInterfaceAnalyzer:
         """Write a PyMOL ``.pml`` colouring the first interface's residues by
         BSA. See :func:`fastpisa.viz.write_pymol_script`."""
         from fastpisa.viz import write_pymol_script
-        self.analyze()
+        self.analyze(recompute=False)
         return write_pymol_script(str(self.path), self.interfaces[0], out_path, by=by)
 
     def write_molstar_html(self, out_path: str) -> str:
         """Write a self-contained Mol* HTML viewer for the first interface."""
         from fastpisa.viz import write_molstar_html
-        self.analyze()
+        self.analyze(recompute=False)
         return write_molstar_html(str(self.path), self.interfaces[0], out_path)
 
     def plot_contact_heatmap(self, interface_id: int = 1, out_path: Optional[str] = None,
@@ -545,7 +565,7 @@ class PISAInterfaceAnalyzer:
         matplotlib; ``fastpisa[viz]``). See
         :func:`fastpisa.viz.plot_contact_heatmap`."""
         from fastpisa.viz import plot_contact_heatmap
-        self.analyze()
+        self.analyze(recompute=False)
         iface = self.get_interface(interface_id)
         return plot_contact_heatmap(iface, self._parsed_atoms(), out_path=out_path, **kwargs)
 

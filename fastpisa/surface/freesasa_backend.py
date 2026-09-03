@@ -30,6 +30,30 @@ def available() -> bool:
     return _HAVE_FREESASA
 
 
+def surface_backend_info() -> dict:
+    """Describe the active ASA backend without changing its parameters."""
+    if not _HAVE_FREESASA:
+        return {
+            "backend": "python",
+            "algorithm": "Shrake-Rupley",
+            "version": None,
+        }
+    try:
+        from importlib.metadata import version
+        backend_version = version("freesasa")
+    except Exception:  # pragma: no cover - package metadata is optional
+        backend_version = None
+    try:
+        algorithm = str(freesasa.Parameters().algorithm())
+    except Exception:  # pragma: no cover - defensive for older bindings
+        algorithm = "unknown"
+    return {
+        "backend": "FreeSASA",
+        "algorithm": algorithm,
+        "version": backend_version,
+    }
+
+
 def calculate_asa_freesasa(
     atoms,
     probe_radius: float = 1.4,

@@ -68,6 +68,15 @@ class AtomContact:
     atom2_seq: int = 0
     atom1_icode: str = ""
     atom2_icode: str = ""
+    # Independent PISA predicates. ``bond_type`` above remains the dominant
+    # compatibility label used by existing consumers and visual styling.
+    bond_types: tuple = field(default_factory=tuple)
+
+    def has_bond_type(self, kind: str) -> bool:
+        """Whether this contact satisfies an independent PISA bond class."""
+        if self.bond_types:
+            return kind in self.bond_types
+        return self.bond_type == kind
 
     @property
     def label(self) -> str:
@@ -136,15 +145,15 @@ class Interface:
     @property
     def hydrogen_bonds(self) -> List[AtomContact]:
         """PISA-style hydrogen bonds (donor/acceptor heavy-atom pairs)."""
-        return [c for c in self.contacts if c.bond_type == "hbond"]
+        return [c for c in self.contacts if c.has_bond_type("hbond")]
 
     @property
     def salt_bridges(self) -> List[AtomContact]:
-        return [c for c in self.contacts if c.bond_type == "salt_bridge"]
+        return [c for c in self.contacts if c.has_bond_type("salt_bridge")]
 
     @property
     def disulfides(self) -> List[AtomContact]:
-        return [c for c in self.contacts if c.bond_type == "disulfide"]
+        return [c for c in self.contacts if c.has_bond_type("disulfide")]
 
     @property
     def contact_map(self) -> List[dict]:
@@ -191,8 +200,14 @@ class Interface:
         """All bonded contacts (H-bonds, salt bridges, disulfides) as a
         pandas DataFrame."""
         import pandas as pd
-        return pd.DataFrame([c.as_dict() for c in self.contacts
-                             if c.bond_type in ("hbond", "salt_bridge", "disulfide")])
+        rows = []
+        for kind in ("hbond", "salt_bridge", "disulfide"):
+            for contact in self.contacts:
+                if contact.has_bond_type(kind):
+                    row = contact.as_dict()
+                    row["bond_type"] = kind
+                    rows.append(row)
+        return pd.DataFrame(rows)
 
     def contact_map_dataframe(self):
         """The residue-residue contact map as a pandas DataFrame."""
@@ -210,7 +225,7 @@ class Interface:
 
     def to_bond_dict(self, bond_type: str) -> dict:
         """Convert contacts of a given type to a bond dict for output."""
-        contacts = [c for c in self.contacts if c.bond_type == bond_type]
+        contacts = [c for c in self.contacts if c.has_bond_type(bond_type)]
         if not contacts:
             return {
                 "bond_distances": [],

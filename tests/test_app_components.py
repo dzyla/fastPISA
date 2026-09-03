@@ -2,6 +2,7 @@
 MolViewSpec builder, the comparison engine, interpretation, and (when
 pdb_align is installed) chain detection / superposition."""
 import json
+import io
 import os
 import sys
 
@@ -39,7 +40,8 @@ def test_interpretation_flags(gi):
     levels = {f["level"] for f in flags}
     assert levels <= {"info", "note", "warning"}
     text = " ".join(f["text"] for f in flags)
-    assert "779" in text and "hot-spot" in text and "Arg59" in text
+    assert "779" in text and "high-burial" in text.lower() and "Arg59" in text
+    assert "stable biological interface" not in text.lower()
     from fastpisa.report import GroupInterface
     empty = GroupInterface("x", "y", ["A"], ["F"])
     assert interpret(empty)[0]["level"] == "warning"
@@ -87,6 +89,53 @@ def test_mvs_document_is_well_formed(gi, res):
     html2 = comparison_view_html([{"name": "a", "text": txt, "fmt": "pdb", "gi": gi, "color": "#000"},
                                   {"name": "b", "text": txt, "fmt": "pdb", "gi": g2, "color": "#f00"}])
     assert html2.count('"kind": "download"') == 2
+
+
+def test_molstar_html_escapes_user_labels(res):
+    from molstar_view import interface_view_html
+
+    label = '</script><script>alert("x")</script>&'
+    unsafe = group_interface(res, ["A"], ["D"], label, "binder")
+    html = interface_view_html("MODEL\nEND\n", "pdb", unsafe)
+
+    assert label not in html
+    assert "&lt;/script&gt;&lt;script&gt;" in html
+    encoded = html.split("const mvs = ", 1)[1].split(";\n", 1)[0]
+    assert json.loads(encoded)["metadata"]["title"].startswith(label)
+
+
+def test_excel_sheet_names_are_safe_and_unique():
+    import openpyxl
+    import pandas as pd
+    from app_helpers import excel_bytes
+
+    frame = pd.DataFrame([{"value": 1}])
+    data = excel_bytes({"bad/name": frame, "BAD\\NAME": frame, "": frame})
+    book = openpyxl.load_workbook(io.BytesIO(data), read_only=True)
+
+    assert book.sheetnames == ["bad name", "BAD NAME (2)", "Sheet"]
+
+
+def test_apply_shared_side_clears_stale_digest():
+    from app_helpers import apply_shared_side
+
+    current = {
+        "group1": ["old"], "group2": ["state"], "label1": "x",
+        "label2": "y", "gi": object(),
+    }
+    reference = {"label1": "antigen", "label2": "binder"}
+    inventory = [
+        {"label": "A", "class": "Protein"},
+        {"label": "B", "class": "Protein"},
+        {"label": "[ZN]B:1", "class": "Ligand"},
+    ]
+
+    apply_shared_side(current, reference, inventory, [("R", "A", 99.0)])
+
+    assert current == {
+        "group1": ["A"], "group2": ["B"],
+        "label1": "antigen", "label2": "binder",
+    }
 
 
 def test_comparison_engine(cmp):

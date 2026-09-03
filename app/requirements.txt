@@ -1,7 +1,7 @@
 # Streamlit Cloud: set the main file to app/streamlit_app.py; this file is
 # picked up automatically from the same directory.
 -e .
-streamlit>=1.46
+streamlit>=1.63,<2
 pandas>=2.0
 numpy>=1.24
 scipy>=1.10

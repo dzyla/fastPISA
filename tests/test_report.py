@@ -1,10 +1,11 @@
 """fastpisa.report: manuscript digests of the interface between chain groups."""
 import os
+from types import SimpleNamespace
 
 import pytest
 
 import fastpisa
-from fastpisa.report import chain_inventory, group_interface, one_letter
+from fastpisa.report import GroupInterface, chain_inventory, group_interface, interpret, one_letter
 from fastpisa.reference.ebi_pisa import cached_pdb_path
 
 _BRS = cached_pdb_path("1brs")
@@ -66,10 +67,16 @@ def test_residue_lists_are_the_interface_residues(res):
 def test_tables_and_prose(res):
     gi = group_interface(res, ["A"], ["D"], "barnase", "barstar")
     bt = gi.bonds_table()
-    # each contact appears once with its dominant label; PISA's counts are
-    # independent predicates (a charged H-bonded pair counts in both), so the
-    # table is bounded by the counts, not equal to their sum
-    assert gi.n_salt_bridges + gi.n_disulfides <= len(bt) <= gi.n_hbonds + gi.n_salt_bridges + gi.n_disulfides
+    # PISA bond classes are independent: charged H-bonded atom pairs must be
+    # present once in each applicable exported table/class.
+    assert len(bt) == gi.n_hbonds + gi.n_salt_bridges + gi.n_disulfides
+    dual = bt.groupby(
+        ["barnase", "barnase atom", "barstar", "barstar atom"]
+    )["type"].nunique()
+    assert dual.max() >= 2
+    pair = gi.pairs[0]
+    assert len(pair.hydrogen_bonds) == pair.number_hydrogen_bonds
+    assert len(pair.salt_bridges) == pair.number_salt_bridges
     assert set(bt["type"]) <= {"hydrogen bond", "salt bridge", "disulfide"}
     assert (bt["chain 1"] == "A").all() and (bt["chain 2"] == "D").all()
     assert len(gi.pair_table()) == 1
@@ -79,9 +86,39 @@ def test_tables_and_prose(res):
     text = gi.results_paragraph()
     assert f"{gi.buried_total:,.0f}" in text and "hydrogen bond" in text
     assert "barnase" in text and "barstar" in text
-    assert "PISA" in gi.methods_paragraph() and "COCOMAPS" in gi.methods_paragraph()
+    methods = gi.methods_paragraph()
+    assert "PISA" in methods and "COCOMAPS-compatible" in methods
+    assert "first coordinate model" in methods and "symmetry" in methods
+    assert "surface backend" in methods and "point density" in methods
     d = gi.to_dict()
     assert d["n_hbonds"] == gi.n_hbonds and d["pairs"] == ["A + D"]
+    assert d["provenance"]["coordinate_scope"] == "first model only; no symmetry generation"
+
+
+def test_interpretation_qualifies_biological_and_hotspot_claims(res):
+    gi = group_interface(res, ["A"], ["D"], "barnase", "barstar")
+    text = " ".join(item["text"] for item in interpret(gi))
+
+    assert "high-burial residues" in text.lower()
+    assert "mutational" in text.lower()
+    assert "stable biological interface" not in text.lower()
+    assert "hot-spot candidates" not in text.lower()
+
+
+def test_ligand_interface_gets_calibration_warning():
+    gi = GroupInterface("heme", "protein", ["[HEM]A:401"], ["B"])
+    gi.pairs = [SimpleNamespace(interface_area=300.0, p_value=0.5)]
+    gi.interface_area = 300.0
+    gi.buried_side1 = 290.0
+    gi.buried_side2 = 310.0
+
+    messages = interpret(gi)
+
+    assert any(
+        item["level"] == "warning" and "ligand" in item["text"].lower()
+        and "calibrat" in item["text"].lower()
+        for item in messages
+    )
 
 
 def test_viewer_commands(res):

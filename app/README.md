@@ -33,3 +33,11 @@ also reloads such modules itself when it detects a missing symbol.
 
 All numbers come from `fastpisa.report.group_interface`, which is a plain
 Python API you can also call from a notebook.
+
+The app analyses the first coordinate model as supplied and does not generate
+crystallographic symmetry mates or biological assemblies. Ordered water is
+excluded. Contact maps and the implemented interaction-class subset use
+COCOMAPS-compatible conventions; this is not a claim that every COCOMAPS 2.0
+interaction class is implemented. Polymer-polymer interfaces have the
+strongest PDBe PISA calibration, while ligand and ion estimates should be
+treated as approximate.

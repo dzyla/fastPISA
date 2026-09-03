@@ -28,7 +28,9 @@ import logging
 import numpy as np
 from scipy.spatial import cKDTree
 
-from fastpisa.parser.pdb_parser import parse_pdb, parse_mmcif, PDBStructure
+from fastpisa.parser.pdb_parser import (
+    parse_pdb, parse_mmcif, is_mmcif_path, PDBStructure,
+)
 from fastpisa.surface.shrake_rupley import calculate_asa, surface_radius
 from fastpisa.interface.contacts import (
     find_interface_atoms, find_contacts, get_molecules, get_molecule_masks,
@@ -98,7 +100,7 @@ def run_core(
     want_cocomaps = mode in ("cocomaps", "combined")
 
     # 1. Parse input file
-    if str(input_file).endswith((".cif", ".cif.gz")):
+    if is_mmcif_path(input_file):
         structure = parse_mmcif(input_file)
     else:
         structure = parse_pdb(input_file)
@@ -141,7 +143,9 @@ def run_core(
 
     # 4. Combined-structure ASA (once)
     logger.info("Calculating combined-structure ASA...")
-    asa_combined = calculate_asa(atoms=atoms, **asa_kwargs)
+    heavy_ids = np.flatnonzero(heavy).tolist()
+    asa_combined = calculate_asa(
+        atoms=[atoms[i] for i in heavy_ids], atom_indices=heavy_ids, **asa_kwargs)
 
     # 5. Isolated ASA per molecule (buried = isolated - combined)
     mol_atom_ids = [np.flatnonzero(mask).tolist() for mask in masks]
@@ -284,6 +288,10 @@ def run_core(
             # H-bond, exactly as original PISA lists it in both tables).
             bond_flags = detect_bond_flags(contacts, atoms, all_coords, kd_tree)
             for c, f in zip(contacts, bond_flags):
+                c.bond_types = tuple(
+                    kind for kind in ("hbond", "salt_bridge", "disulfide")
+                    if kind in f
+                )
                 if "disulfide" in f:
                     c.bond_type = "disulfide"
                 elif "salt_bridge" in f:

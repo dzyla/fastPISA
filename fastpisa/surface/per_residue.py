@@ -76,21 +76,27 @@ def compute_per_residue_surface(
     interface_atom_indices : set
         Set of atom indices that are at the interface.
     mol_atoms : list
-        Atom indices belonging to this molecule (unused beyond grouping).
+        Heavy-atom indices belonging to this molecule. Once an interface
+        residue is identified, all of its atoms contribute to isolated ASA.
 
     Returns
     -------
     dict
         Per-residue data with lists for each residue.
     """
-    # Group interface atoms by residue
+    # Identify interface residues from the atoms whose surface changes, then
+    # group every heavy atom in those residues. PISA's per-residue ``asa`` is
+    # the isolated whole-residue ASA, not only the ASA of interface atoms.
+    interface_residues = {
+        (atoms[idx].auth_asym_id, atoms[idx].res_seq, atoms[idx].icode)
+        for idx in interface_atom_indices
+    }
     residues = {}  # (auth_asym_id, seq_id, icode) -> list of atom indices
-    for idx in interface_atom_indices:
+    for idx in mol_atoms:
         atom = atoms[idx]
         res_key = (atom.auth_asym_id, atom.res_seq, atom.icode)
-        if res_key not in residues:
-            residues[res_key] = []
-        residues[res_key].append(idx)
+        if res_key in interface_residues:
+            residues.setdefault(res_key, []).append(idx)
 
     result = {
         "residue_label_comp_ids": [],

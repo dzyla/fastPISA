@@ -139,6 +139,57 @@ def _is_polymer_residue(res_name: str) -> bool:
     return res_name.upper() in _POLYMER_RESIDUES
 
 
+def is_mmcif_path(path) -> bool:
+    """Return whether *path* has a supported mmCIF filename suffix."""
+    return str(path).lower().endswith((
+        ".cif", ".cif.gz", ".mmcif", ".mmcif.gz",
+    ))
+
+
+def _site_key(atom: Atom) -> tuple:
+    """Identity of one atom site before alternate-conformer selection."""
+    return (
+        atom.auth_asym_id,
+        atom.label_asym_id,
+        atom.auth_seq_id,
+        atom.label_seq_id,
+        atom.icode,
+        atom.res_name,
+        atom.atom_name.strip(),
+    )
+
+
+def _prefer_altloc(candidate: Atom, current: Atom) -> bool:
+    """Whether *candidate* wins the deterministic alternate-location rule."""
+    candidate_blank = candidate.altloc == " "
+    current_blank = current.altloc == " "
+    if candidate_blank != current_blank:
+        return candidate_blank
+    if candidate.occupancy != current.occupancy:
+        return candidate.occupancy > current.occupancy
+    return candidate.altloc < current.altloc
+
+
+def _chains_from_atoms(atoms: List[Atom]) -> List[Chain]:
+    """Build parser chains after alternate conformers have been resolved."""
+    chains_by_id = {}
+    for atom in atoms:
+        chain_type = "polymer" if _is_polymer_residue(atom.res_name) else "ligand"
+        if atom.chain_id not in chains_by_id:
+            chains_by_id[atom.chain_id] = Chain(
+                auth_asym_id=atom.auth_asym_id,
+                label_asym_id=atom.label_asym_id,
+                chain_id=atom.chain_id,
+                group=chain_type,
+            )
+        elif chain_type == "ligand":
+            chains_by_id[atom.chain_id].group = "ligand"
+        chains_by_id[atom.chain_id].atoms.append(atom)
+    for chain in chains_by_id.values():
+        chain.atoms.sort(key=lambda a: (a.res_seq, a.icode, a.atom_name))
+    return list(chains_by_id.values())
+
+
 def parse_pdb(path: str) -> PDBStructure:
     """Parse a PDB file and return a PDBStructure.
 
@@ -152,7 +203,8 @@ def parse_pdb(path: str) -> PDBStructure:
     PDBStructure
     """
     structure = PDBStructure()
-    chains_by_id: dict = {}
+    selected_atoms = {}
+    seen_model = False
 
     if str(path).endswith(".gz"):
         import gzip
@@ -161,8 +213,15 @@ def parse_pdb(path: str) -> PDBStructure:
         _open = lambda p: open(p, "r")  # noqa: E731
 
     with _open(path) as f:
-        for line in f:
+        for line_number, line in enumerate(f, start=1):
             rec = line[:6].strip()
+            if rec == "MODEL":
+                if seen_model:
+                    break
+                seen_model = True
+                continue
+            if rec == "ENDMDL" and seen_model:
+                break
             if rec not in ("ATOM", "HETATM"):
                 if rec == "HEADER":
                     structure.source = line[10:70].strip()
@@ -194,36 +253,17 @@ def parse_pdb(path: str) -> PDBStructure:
             occupancy = float(line[54:60]) if line[54:60].strip() else 1.0
             bfactor = float(line[60:66]) if line[60:66].strip() else 0.0
 
-            # Element from PDB columns 77-78 (authoritative in PDB format)
-            # Fallback to deriving from atom name if not present
+            # Element from PDB columns 77-78 (authoritative in PDB format).
+            # Guessing from the atom name confuses alpha carbon (" CA ") with
+            # calcium and silently changes radii and solvation parameters.
             el = line[76:78].strip().upper()
             if not el:
-                el = atom_name[0:2].strip()
-                if len(el) == 2 and not el[1].isalpha():
-                    el = el[0]
-                el = el.upper()
-                if not el or not el[0].isalpha():
-                    el = atom_name[0].upper() if atom_name else "C"
-
-            group = rec
-
-            # Determine chain type
-            is_poly = _is_polymer_residue(res_name)
-            chain_type = "polymer" if is_poly else "ligand"
-
-            if chain_id not in chains_by_id:
-                chains_by_id[chain_id] = Chain(
-                    auth_asym_id=chain_id,
-                    label_asym_id=chain_id,
-                    chain_id=chain_id,
-                    group=chain_type,
+                raise ValueError(
+                    f"Invalid PDB atom record at line {line_number}: element "
+                    "columns 77-78 are blank"
                 )
 
-            chain = chains_by_id[chain_id]
-
-            # For ligands, set the chain group to ligand if any residue is a ligand
-            if chain_type == "ligand":
-                chain.group = "ligand"
+            group = rec
 
             atom = Atom(
                 atom_name=atom_name,
@@ -245,13 +285,12 @@ def parse_pdb(path: str) -> PDBStructure:
                 auth_seq_id=res_seq,
                 group=group,
             )
-            chain.atoms.append(atom)
+            key = _site_key(atom)
+            current = selected_atoms.get(key)
+            if current is None or _prefer_altloc(atom, current):
+                selected_atoms[key] = atom
 
-    # Sort atoms by residue
-    for chain in chains_by_id.values():
-        chain.atoms.sort(key=lambda a: (a.res_seq, a.icode, a.atom_name))
-
-    structure.chains = list(chains_by_id.values())
+    structure.chains = _chains_from_atoms(list(selected_atoms.values()))
     return structure
 
 
@@ -300,56 +339,8 @@ def parse_mmcif(path: str) -> PDBStructure:
     except Exception:
         pass
 
-    # Atom site table via gemmi structure parse (robust for predicted CIFs)
-    try:
-        st = gemmi.read_structure(path)
-    except Exception:
-        st = None
-
-    chains_by_id: dict = {}
-    if st is not None:
-        for model in st:
-            for chain in model:
-                cid = chain.name
-                if cid not in chains_by_id:
-                    chains_by_id[cid] = Chain(
-                        auth_asym_id=cid,
-                        label_asym_id=cid,
-                        chain_id=cid,
-                        group="polymer" if chain.get_polymer() is not None else "ligand",
-                    )
-                chain_obj = chains_by_id[cid]
-                for res in chain:
-                    res_name = res.name.upper()
-                    auth_seq = int(res.seqid.num) if res.seqid else 0
-                    label_seq = int(res.seqid.num) if res.seqid else 0
-                    for atom in res:
-                        x, y, z = atom.pos[0], atom.pos[1], atom.pos[2]
-                        element = atom.element.name.upper() if atom.element.name else "C"
-                        atom_name = atom.name
-                        chain_obj.atoms.append(Atom(
-                            atom_name=atom_name,
-                            altloc=" ",
-                            res_name=res_name,
-                            chain_id=cid,
-                            res_seq=auth_seq,
-                            icode="",
-                            x=x, y=y, z=z,
-                            occupancy=atom.occ if atom.occ else 1.0,
-                            bfactor=atom.b_iso if atom.b_iso else 0.0,
-                            element=element,
-                            label_asym_id=cid,
-                            label_seq_id=label_seq,
-                            label_comp_id=res_name,
-                            auth_asym_id=cid,
-                            auth_seq_id=auth_seq,
-                            group=atom.element.name,
-                        ))
-        if chains_by_id:
-            structure.chains = list(chains_by_id.values())
-            return structure
-
-    # Fallback: manual mmCIF atom_site table parsing
+    # The atom_site table retains label/auth identifiers and model/altloc
+    # fields that Gemmi's high-level Structure view may normalize away.
     structure.chains = _parse_mmcif_atom_site_manual(block)
     return structure
 
@@ -359,39 +350,80 @@ def _parse_mmcif_atom_site_manual(block) -> list:
 
     Returns a list of Chain objects.
     """
-    tags = ["group_PDB", "auth_asym_id", "label_comp_id", "auth_seq_id",
-            "Cartn_x", "Cartn_y", "Cartn_z", "type_symbol", "label_atom_id"]
-    rows = block.find("_atom_site.", tags)  # gemmi.cif.Table
-    idx = {t: i for i, t in enumerate(tags)}
+    tags = [
+        "group_PDB", "id", "type_symbol", "label_atom_id", "label_alt_id",
+        "label_comp_id", "label_asym_id", "label_seq_id", "Cartn_x",
+        "Cartn_y", "Cartn_z", "occupancy", "B_iso_or_equiv", "auth_seq_id",
+        "auth_comp_id", "auth_asym_id", "auth_atom_id", "pdbx_PDB_ins_code",
+        "pdbx_PDB_model_num",
+    ]
+    columns = {
+        tag: [str(value) for value in block.find_values(f"_atom_site.{tag}")]
+        for tag in tags
+    }
+    n_rows = len(columns["Cartn_x"])
+    if not n_rows:
+        return []
 
-    chains_by_id = {}
-    for row in rows:
-        group = str(row[idx["group_PDB"]])
+    def value(tag, row, default=""):
+        column = columns[tag]
+        raw = column[row] if row < len(column) else default
+        return default if raw in ("", ".", "?") else raw
+
+    def integer(tag, row, default=0):
+        try:
+            return int(value(tag, row, str(default)))
+        except ValueError:
+            return default
+
+    def number(tag, row, default=0.0):
+        try:
+            return float(value(tag, row, str(default)))
+        except ValueError:
+            return default
+
+    first_model = value("pdbx_PDB_model_num", 0, "1")
+    selected_atoms = {}
+    for row in range(n_rows):
+        if value("pdbx_PDB_model_num", row, first_model) != first_model:
+            continue
+        group = value("group_PDB", row)
         if group not in ("ATOM", "HETATM"):
             continue
-        cid = str(row[idx["auth_asym_id"]])
-        res_name = str(row[idx["label_comp_id"]]).upper()
-        try:
-            auth_seq = int(str(row[idx["auth_seq_id"]]))
-        except ValueError:
-            auth_seq = 0
-        x = float(str(row[idx["Cartn_x"]]))
-        y = float(str(row[idx["Cartn_y"]]))
-        z = float(str(row[idx["Cartn_z"]]))
-        el = str(row[idx["type_symbol"]]).upper() or "C"
-        atom_name = str(row[idx["label_atom_id"]])
-
-        if cid not in chains_by_id:
-            chains_by_id[cid] = Chain(
-                auth_asym_id=cid, label_asym_id=cid, chain_id=cid,
-                group="polymer" if res_name in _POLYMER_RESIDUES else "ligand",
-            )
-        chain = chains_by_id[cid]
-        chain.atoms.append(Atom(
-            atom_name=atom_name, altloc=" ", res_name=res_name, chain_id=cid,
-            res_seq=auth_seq, icode="", x=x, y=y, z=z, occupancy=1.0, bfactor=0.0,
-            element=el, label_asym_id=cid, label_seq_id=auth_seq,
-            label_comp_id=res_name, auth_asym_id=cid, auth_seq_id=auth_seq,
+        label_chain = value("label_asym_id", row)
+        auth_chain = value("auth_asym_id", row, label_chain)
+        label_res = value("label_comp_id", row).upper()
+        auth_res = value("auth_comp_id", row, label_res).upper()
+        auth_seq = integer("auth_seq_id", row)
+        label_seq = integer("label_seq_id", row, auth_seq)
+        atom_name = value("auth_atom_id", row, value("label_atom_id", row))
+        altloc = value("label_alt_id", row, " ")
+        element = value("type_symbol", row).upper()
+        if not element:
+            raise ValueError(f"Invalid mmCIF atom_site row {row + 1}: type_symbol is blank")
+        atom = Atom(
+            atom_name=atom_name,
+            altloc=altloc,
+            res_name=auth_res,
+            chain_id=auth_chain,
+            res_seq=auth_seq,
+            icode=value("pdbx_PDB_ins_code", row),
+            x=number("Cartn_x", row),
+            y=number("Cartn_y", row),
+            z=number("Cartn_z", row),
+            occupancy=number("occupancy", row, 1.0),
+            bfactor=number("B_iso_or_equiv", row),
+            element=element,
+            residue_label_asym_id=label_chain,
+            label_asym_id=label_chain,
+            label_seq_id=label_seq,
+            label_comp_id=label_res,
+            auth_asym_id=auth_chain,
+            auth_seq_id=auth_seq,
             group=group,
-        ))
-    return list(chains_by_id.values())
+        )
+        key = _site_key(atom)
+        current = selected_atoms.get(key)
+        if current is None or _prefer_altloc(atom, current):
+            selected_atoms[key] = atom
+    return _chains_from_atoms(list(selected_atoms.values()))

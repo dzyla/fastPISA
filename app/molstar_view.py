@@ -11,6 +11,7 @@ served -- this works on Streamlit Cloud.
 from __future__ import annotations
 
 import base64
+import html
 import json
 from typing import Dict, List, Optional, Sequence
 
@@ -147,9 +148,13 @@ def molstar_html(mvs: dict, height: int = 600, legend: Optional[Dict[str, str]] 
     legend_html = "".join(
         f'<span style="display:inline-flex;align-items:center;margin-right:14px">'
         f'<span style="width:12px;height:12px;background:{col};display:inline-block;'
-        f'margin-right:5px;border-radius:2px"></span>{name}</span>'
+        f'margin-right:5px;border-radius:2px"></span>{html.escape(str(name), quote=True)}</span>'
         for name, col in legend.items())
-    mvs_json = json.dumps(mvs)
+    # JSON is embedded in a script element. Escaping the HTML-significant
+    # characters prevents a user label containing ``</script>`` from closing
+    # that element while remaining valid JSON with identical decoded values.
+    mvs_json = (json.dumps(mvs).replace("<", "\\u003c")
+                .replace(">", "\\u003e").replace("&", "\\u0026"))
     return f"""<!DOCTYPE html>
 <html><head>
 <link rel="stylesheet" href="{MOLSTAR_CSS}">
