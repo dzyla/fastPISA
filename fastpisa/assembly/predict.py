@@ -83,3 +83,181 @@ def grow(seed: Node, edges: Sequence[ContactEdge],
 
     return GrowthResult(nodes=tuple(order), edges=tuple(used.values()),
                         finite=True, reason="closed")
+
+
+@dataclass
+class Assembly:
+    """One finite assembly the crystal can form."""
+
+    rank: int
+    nodes: tuple
+    size: int
+    mmsize: int
+    composition: str
+    formula: str
+    dissociation_energy: float
+    entropy: float
+    interface_ids: tuple
+    n_interfaces: int
+
+
+def _molecule_index(state) -> Dict[str, dict]:
+    """``asu_molecule_id`` -> its molecule dict (asymmetric unit copies)."""
+    index: Dict[str, dict] = {}
+    for iface in state.interfaces:
+        for mol in iface.molecules:
+            index.setdefault(mol["asu_molecule_id"], mol)
+    for mol in state.molecules:
+        key = mol.get("asu_molecule_id", mol.get("chain_id"))
+        if key is not None:
+            index.setdefault(key, mol)
+    return index
+
+
+def _molecule_masses(state) -> Dict[str, float]:
+    """Mass in daltons of each asymmetric-unit molecule."""
+    import numpy as np
+
+    from fastpisa.energy.entropy import atoms_mass
+
+    masses: Dict[str, float] = {}
+    for mol, mask in zip(state.molecules, state.masks):
+        key = mol.get("asu_molecule_id", mol.get("chain_id"))
+        if key is None or key in masses:
+            continue
+        masses[key] = atoms_mass(state.atoms[i]
+                                 for i in np.flatnonzero(mask))
+    return masses
+
+
+def _composition(nodes, index) -> str:
+    """PISA-shaped composition string, e.g. ``E[4]I[4][CA][4]``."""
+    from collections import Counter
+
+    counts = Counter(molecule for molecule, _ in nodes)
+    parts = []
+    for molecule in sorted(counts, key=lambda m: (m.startswith("["), m)):
+        n = counts[molecule]
+        parts.append(molecule if n == 1 else f"{molecule}[{n}]")
+    return "".join(parts)
+
+
+def _formula(nodes, index) -> str:
+    """PISA-shaped formula: upper case per distinct polymer, lower for ligands."""
+    from collections import Counter
+
+    counts = Counter(molecule for molecule, _ in nodes)
+    polymers = [m for m in sorted(counts)
+                if index.get(m, {}).get("molecule_class") != "Ligand"]
+    ligands = [m for m in sorted(counts)
+               if index.get(m, {}).get("molecule_class") == "Ligand"]
+    out = []
+    for letter, molecule in zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ", polymers):
+        n = counts[molecule]
+        out.append(letter if n == 1 else f"{letter}{n}")
+    for letter, molecule in zip("abcdefghijklmnopqrstuvwxyz", ligands):
+        n = counts[molecule]
+        out.append(letter if n == 1 else f"{letter}{n}")
+    return "".join(out)
+
+
+def _score(nodes, edges, index, masses):
+    """(dG_diss, T dS) of this assembly, via the shared dissociation search."""
+    from fastpisa.energy.dissociation import assembly_dissociation
+
+    node_mass = {}
+    for position, (molecule, placement) in enumerate(nodes):
+        node_mass[position] = masses.get(molecule, 0.0)
+    node_of = {(molecule, placement.key()): position
+               for position, (molecule, placement) in enumerate(nodes)}
+    internal = []
+    for position, (molecule, placement) in enumerate(nodes):
+        for (partner, partner_placement), edge in neighbours(
+                (molecule, placement), edges):
+            other = node_of.get((partner, partner_placement.key()))
+            if other is None or other <= position:
+                continue
+            internal.append((position, other, edge.stabilization))
+    pathway = assembly_dissociation(node_mass, internal)
+    return pathway.dissociation_energy, pathway.entropy
+
+
+def predict_assemblies(state,
+                       max_nodes: int = MAX_ASSEMBLY_NODES) -> List[Assembly]:
+    """Finite assemblies this crystal can form, most stable first.
+
+    Candidates come from NESTED interface subsets: with the crystal's
+    interfaces sorted most-stabilising first, grow components from every
+    molecule using only the top k, for k = 1..n. Bounded at n iterations,
+    and it is the order PISA takes an assembly apart in. An exhaustive 2^n
+    subset search is deliberately not attempted.
+
+    Components that repeat translationally are dropped (they are lattices,
+    not assemblies), as are components made only of hetero groups -- with
+    ``ligand_mode="separate"`` a lone ion is its own molecule and "an
+    assembly of one ion" is not a useful answer.
+
+    A structure with no symmetry and no interfaces yields its monomers, which
+    is the right answer for a predicted single chain.
+    """
+    from collections import Counter
+
+    from fastpisa.assembly.graph import IDENTITY_PLACEMENT, contact_edges
+
+    index = _molecule_index(state)
+    masses = _molecule_masses(state)
+    all_edges = contact_edges(state)
+    seeds = [(key, IDENTITY_PLACEMENT) for key in sorted(masses)]
+
+    found: Dict[tuple, Assembly] = {}
+    subsets = range(1, len(all_edges) + 1) if all_edges else [0]
+    for k in subsets:
+        edges = all_edges[:k]
+        for seed in seeds:
+            result = grow(seed, edges, max_nodes=max_nodes)
+            if not result.finite:
+                continue
+            molecules = [m for m, _ in result.nodes]
+            if all(index.get(m, {}).get("molecule_class") == "Ligand"
+                   for m in molecules):
+                continue
+            signature = tuple(sorted(
+                (molecule, placement.key())
+                for molecule, placement in result.nodes))
+            if signature in found:
+                continue
+            diss, entropy = _score(result.nodes, edges, index, masses)
+            found[signature] = Assembly(
+                rank=0,
+                nodes=result.nodes,
+                size=len(result.nodes),
+                mmsize=sum(
+                    1 for m in molecules
+                    if index.get(m, {}).get("molecule_class") != "Ligand"),
+                composition=_composition(result.nodes, index),
+                formula=_formula(result.nodes, index),
+                dissociation_energy=diss,
+                entropy=entropy,
+                interface_ids=tuple(sorted(
+                    e.interface_id for e in result.edges)),
+                n_interfaces=len(result.edges),
+            )
+
+    # Collapse assemblies with identical molecule content, keeping the most
+    # stable: two seeds in the same orbit give the same assembly placed
+    # differently.
+    by_content: Dict[tuple, Assembly] = {}
+    for assembly in found.values():
+        key = (tuple(sorted(Counter(m for m, _ in assembly.nodes).items())),
+               assembly.size)
+        previous = by_content.get(key)
+        if (previous is None
+                or assembly.dissociation_energy > previous.dissociation_energy):
+            by_content[key] = assembly
+
+    ranked = sorted(by_content.values(),
+                    key=lambda a: (-a.dissociation_energy, -a.size,
+                                   a.composition))
+    for position, assembly in enumerate(ranked, start=1):
+        assembly.rank = position
+    return ranked
