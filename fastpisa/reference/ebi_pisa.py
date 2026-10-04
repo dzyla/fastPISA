@@ -29,6 +29,12 @@ RCSB_PDB_URL = "https://files.rcsb.org/download/{pdbid}.pdb"
 # Modern PDBe PISA JSON API (covers recent entries; the classic CGI above has
 # a frozen database). It reports the analysis of a BIOLOGICAL ASSEMBLY, so
 # fastPISA must be run on the matching assembly coordinate file.
+#: PISA's own assembly predictions for a deposited entry. Same frozen
+#: classic-CGI database as the interface list, so the two agree by
+#: construction for any entry both cover.
+PISA_MULTIMERS_URL = (
+    "https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/multimers.pisa?{pdbid}")
+
 PDBE_PISA_JSON_URL = "https://www.ebi.ac.uk/pdbe/api/pisa/interfaces/{pdbid}/{assembly}"
 RCSB_ASSEMBLY_URL = "https://files.rcsb.org/download/{pdbid}-assembly{assembly}.cif.gz"
 
@@ -79,6 +85,90 @@ def fetch_pisa_xml(pdb_id: str, cache_dir: str = REFERENCE_DIR,
     with gzip.open(path, "wt") as fh:
         fh.write(text)
     return text
+
+
+def fetch_pisa_multimers(pdb_id: str, cache_dir: str = REFERENCE_DIR,
+                         timeout: int = 120) -> str:
+    """Return PISA's predicted-assembly XML for ``pdb_id`` (cached, gzipped).
+
+    ``total_asm == 0`` is cached like any other answer: PISA genuinely
+    predicts no stable assembly for some entries (1brs), and treating that
+    as a failure would re-fetch it forever.
+    """
+    pdb_id = pdb_id.lower()
+    os.makedirs(cache_dir, exist_ok=True)
+    path = os.path.join(cache_dir, f"{pdb_id}.multimers.xml.gz")
+    if os.path.exists(path):
+        with gzip.open(path, "rt") as fh:
+            return fh.read()
+    url = PISA_MULTIMERS_URL.format(pdbid=pdb_id)
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        text = resp.read().decode("utf-8", errors="replace")
+    if "<pisa_multimers>" not in text:
+        raise RuntimeError(f"EBI PISA returned no multimer XML for {pdb_id}")
+    root = ET.fromstring(text)
+    status = root.findtext("status")
+    if status and status.strip().lower() != "ok":
+        raise RuntimeError(f"EBI PISA status {status!r} for {pdb_id}")
+    entry_status = root.findtext("pdb_entry/status")
+    if entry_status and entry_status.strip().lower() != "ok":
+        raise RuntimeError(
+            f"EBI PISA (classic CGI) has no assembly data for {pdb_id}: "
+            f"{entry_status}")
+    with gzip.open(path, "wt") as fh:
+        fh.write(text)
+    return text
+
+
+def _multimer_molecule(el) -> dict:
+    rotation = [[_f(el, f"r{row}{col}", 0.0) or 0.0 for col in "xyz"]
+                for row in "xyz"]
+    translation = [_f(el, t, 0.0) or 0.0 for t in ("tx", "ty", "tz")]
+    return {"chain_id": _s(el, "chain_id"),
+            "rotation": rotation,
+            "translation": translation}
+
+
+def parse_pisa_multimers(text: str) -> dict:
+    """Parse PISA's multimer XML into ``{pdb_id, total_asm, assemblies}``."""
+    root = ET.fromstring(text)
+    out = {
+        "pdb_id": (root.findtext("pdb_entry/pdb_code") or "").lower(),
+        "total_asm": int(float(root.findtext("pdb_entry/total_asm") or 0)),
+        "assemblies": [],
+    }
+    for asm_set in root.iter("asm_set"):
+        set_no = int(float(asm_set.findtext("ser_no") or 0))
+        for asm in asm_set.findall("assembly"):
+            out["assemblies"].append({
+                "set_no": set_no,
+                "id": int(float(_f(asm, "id", 0) or 0)),
+                "size": int(float(_f(asm, "size", 0) or 0)),
+                "mmsize": int(float(_f(asm, "mmsize", 0) or 0)),
+                "formula": _s(asm, "formula"),
+                "composition": _s(asm, "composition"),
+                "diss_energy": _f(asm, "diss_energy"),
+                "entropy": _f(asm, "entropy"),
+                "diss_area": _f(asm, "diss_area"),
+                "int_energy": _f(asm, "int_energy"),
+                "symmetry_number": int(float(_f(asm, "symNumber", 1) or 1)),
+                "n_diss": int(float(_f(asm, "n_diss", 0) or 0)),
+                "r350": int(float(_f(asm, "R350", 0) or 0)),
+                "score": " ".join((_s(asm, "score") or "").split()),
+                "molecules": [_multimer_molecule(m)
+                              for m in asm.findall("molecule")],
+            })
+    return out
+
+
+def load_cached_multimers(pdb_id: str,
+                          cache_dir: str = REFERENCE_DIR) -> Optional[dict]:
+    """Parsed multimer reference from the cache, or None if not cached."""
+    path = os.path.join(cache_dir, f"{pdb_id.lower()}.multimers.xml.gz")
+    if not os.path.exists(path):
+        return None
+    with gzip.open(path, "rt") as fh:
+        return parse_pisa_multimers(fh.read())
 
 
 def fetch_pdb_file(pdb_id: str, cache_dir: str = REFERENCE_DIR,
