@@ -1,11 +1,12 @@
 """Assembly-level analysis.
 
-fastPISA analyses the coordinates it is GIVEN -- an asymmetric unit, a
-biological-assembly file, a predicted model. It does not generate
-crystallographic symmetry mates and does not search the crystal for
-assemblies, so the packing interfaces original PISA reports for an
-experimental entry are outside its scope (see the README's benchmark note:
-the comparison is restricted to PISA's identity-symmetry interfaces).
+fastPISA analyses the coordinates it is GIVEN by default -- an asymmetric
+unit, a biological-assembly file, a predicted model. With
+``symmetry="crystal"`` it additionally generates crystallographic symmetry
+mates and reports the crystal's packing interfaces, and with
+``predict_assemblies=True`` it searches the crystal for the assemblies those
+interfaces admit. Both are opt-in; without a usable cell and space group
+they are no-ops, which is the right answer for a predicted model.
 
 What IS here: :mod:`fastpisa.assembly.crystal` generates the symmetry mates,
 :mod:`fastpisa.assembly.graph` turns the crystal's interfaces into a contact

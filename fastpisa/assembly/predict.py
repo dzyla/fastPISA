@@ -161,23 +161,51 @@ def _formula(nodes, index) -> str:
     return "".join(out)
 
 
-def _score(nodes, edges, index, masses):
-    """(dG_diss, T dS) of this assembly, via the shared dissociation search."""
-    from fastpisa.energy.dissociation import assembly_dissociation
+def internal_contacts(nodes, edges):
+    """``{(low, high): edge}`` for every contact inside this node set.
 
-    node_mass = {}
-    for position, (molecule, placement) in enumerate(nodes):
-        node_mass[position] = masses.get(molecule, 0.0)
+    Each physical contact appears ONCE. A homomolecular edge whose placement
+    is self-inverse -- any pure 2-fold, inversion centre or mirror, which is
+    the commonest crystallographic dimer -- is reached from both directions
+    and lands on the SAME partner node, so without this it entered the
+    dissociation cut twice: ``assembly_dissociation`` sums repeated pairs, and
+    1ktz's A[2] scored dG_diss 20.87 against PISA's 5.63.
+
+    The de-duplication is per (node pair, interface), NOT per direction: in a
+    3-fold trimer the forward and reverse branches reach *different* nodes and
+    both are genuine contacts, so dropping the reverse branch would be wrong.
+    """
     node_of = {(molecule, placement.key()): position
                for position, (molecule, placement) in enumerate(nodes)}
-    internal = []
+    found = {}
     for position, (molecule, placement) in enumerate(nodes):
         for (partner, partner_placement), edge in neighbours(
                 (molecule, placement), edges):
             other = node_of.get((partner, partner_placement.key()))
-            if other is None or other <= position:
+            if other is None or other == position:
                 continue
-            internal.append((position, other, edge.stabilization))
+            key = (min(position, other), max(position, other),
+                   edge.interface_id)
+            found.setdefault(key, edge)
+    return found
+
+
+def _score(nodes, edges, index, masses):
+    """(dG_diss, T dS) of this assembly, via the shared dissociation search.
+
+    ``edges`` must be the FULL crystal edge list, not the subset that closed
+    the component: an assembly's dissociation cut is over its own internal
+    interface graph (spec R4), and scoring over the sparser closing subset
+    systematically understates dG_diss -- 1a3n's ABCD tetramer closes over
+    two interfaces while four are internal to it.
+    """
+    from fastpisa.energy.dissociation import assembly_dissociation
+
+    node_mass = {position: masses.get(molecule, 0.0)
+                 for position, (molecule, _) in enumerate(nodes)}
+    internal = [(low, high, edge.stabilization)
+                for (low, high, _), edge
+                in internal_contacts(nodes, edges).items()]
     pathway = assembly_dissociation(node_mass, internal)
     return pathway.dissociation_energy, pathway.entropy
 
@@ -226,7 +254,11 @@ def predict_assemblies(state,
                 for molecule, placement in result.nodes))
             if signature in found:
                 continue
-            diss, entropy = _score(result.nodes, edges, index, masses)
+            # Scored over ALL crystal edges, not the top-k that closed the
+            # component: whichever k first reaches an assembly, its
+            # dissociation cut is over its own internal interface graph.
+            diss, entropy = _score(result.nodes, all_edges, index, masses)
+            internal = internal_contacts(result.nodes, all_edges)
             found[signature] = Assembly(
                 rank=0,
                 nodes=result.nodes,
@@ -239,8 +271,8 @@ def predict_assemblies(state,
                 dissociation_energy=diss,
                 entropy=entropy,
                 interface_ids=tuple(sorted(
-                    e.interface_id for e in result.edges)),
-                n_interfaces=len(result.edges),
+                    {edge.interface_id for edge in internal.values()})),
+                n_interfaces=len(internal),
             )
 
     # Collapse assemblies with identical molecule content, keeping the most

@@ -266,8 +266,19 @@ def run_core(
         # Keying symmetry equivalence on the chain alone makes every hetero
         # group in a chain indistinguishable, which silently merges real
         # interfaces (1ppf's two eight-sugar glycans collapse to one).
-        mol["asu_molecule_id"] = split_mate_chain_id(
-            mol.get("chain_id", asu_chain))[0]
+        # Rebuilt from the molecule's OWN fields, never by string surgery on
+        # chain_id: a mate ligand's chain id is "[SO4]H~4_555:623", and
+        # splitting that on the mate separator from the right swallowed the
+        # residue number into the label and left "[SO4]H" -- collapsing every
+        # SO4 of chain H onto one molecule. 1a3n held both "[HEM]A" and
+        # "[HEM]A:142"; in 1prc three SO4 residues became one node and two
+        # different interfaces resolved to it.
+        if mol.get("chain_type") == "ligand":
+            mol["asu_molecule_id"] = (
+                f"[{mol.get('ccd_id', '')}]{asu_chain}"
+                f":{mol.get('auth_seq_id', '')}{mol.get('icode', '')}")
+        else:
+            mol["asu_molecule_id"] = asu_chain
         mol["symop"] = placement.triplet
         mol["symop_no"] = placement.symop_no
         mol["cell"] = placement.cell
@@ -773,18 +784,38 @@ def dissociation_pathway(state: CoreState) -> DissociationPathway:
     return pathway
 
 
-def _symop_of(state, molecule_id: str, placement) -> int:
-    """Symmetry-operation number of a placement, for the output document."""
+def _symop_of(state, molecule_id: str, placement):
+    """Symmetry-operation number of a placement, or ``None`` if unknown.
+
+    Matched on the rotation and the translation MODULO the cell, which is
+    what a space-group operation is; the lattice part is reported separately
+    as ``cell``. Requiring the full translation to match meant only
+    placements in the exact cached shell were ever found, and a composed
+    placement fell through to a default of 1 -- on 1urn, 9 of 39 output
+    placements claimed the identity operation while their rotation was not
+    the identity, so a consumer rebuilding the assembly stacked molecules on
+    top of each other.
+
+    Returns ``None`` rather than a plausible default: a miss has to be
+    visible. The exact fractional placement is emitted alongside, so the
+    document stays reconstructible either way.
+    """
+    den = placement.denominator
+    wanted_rotation = placement.rotation
+    wanted_translation = tuple(v % den for v in placement.translation)
     for iface in state.interfaces:
         for mol in iface.molecules:
-            if (mol.get("asu_molecule_id") == molecule_id
-                    and tuple(tuple(int(v) for v in row)
-                              for row in mol.get("frac_rotation", ()))
-                    == placement.rotation
-                    and tuple(int(v) for v in mol.get("frac_translation", ()))
-                    == placement.translation):
-                return int(mol.get("symop_no", 1))
-    return 1
+            if mol.get("asu_molecule_id") != molecule_id:
+                continue
+            rotation = tuple(tuple(int(v) for v in row)
+                             for row in mol.get("frac_rotation", ()))
+            if rotation != wanted_rotation:
+                continue
+            translation = tuple(int(v) % den
+                                for v in mol.get("frac_translation", ()))
+            if translation == wanted_translation:
+                return int(mol.get("symop_no"))
+    return None
 
 
 def build_documents(
@@ -827,7 +858,13 @@ def build_documents(
             "molecules": [
                 {"asu_molecule_id": molecule,
                  "symop_no": _symop_of(state, molecule, placement),
-                 "cell": [int(v) for v in placement.cell()]}
+                 "cell": [int(v) for v in placement.cell()],
+                 # The exact placement, so the assembly is reconstructible
+                 # without depending on the symop lookup succeeding.
+                 "frac_rotation": [[int(v) for v in row]
+                                   for row in placement.rotation],
+                 "frac_translation": [int(v) for v in placement.translation],
+                 "frac_denominator": int(placement.denominator)}
                 for molecule, placement in a.nodes
             ],
         }

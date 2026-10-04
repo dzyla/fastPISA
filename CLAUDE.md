@@ -205,23 +205,53 @@ useful. `--predict-assemblies` on the CLI.
   34. Don't "fix" this back.
 - **Ligand-only components are dropped**: with `ligand_mode="separate"` a
   lone ion is its own molecule and "an assembly of one ion" is noise.
-- Measured vs PISA's own predictions (`multimers.pisa`, cached for the 37
-  reference entries): top-assembly **mmsize match 50.0%**, composition
-  **26.5%**, author-deposited assembly (PISA's `R350`) **50.0%**, recall of
-  PISA's assembly sizes **82.5%**. Recorded in
-  `tests/data/reference/assembly_validation.json` (with the pre-ranking-fix
-  numbers in its `history`) and asserted by
+- **Each internal contact is counted ONCE, and all of them are counted.**
+  Two defects found in review, both of which depressed every reported
+  number. (a) For a self-inverse operation -- any pure 2-fold, inversion
+  centre or mirror, i.e. the commonest crystallographic dimer -- a
+  homomolecular edge is reached from both directions and lands on the SAME
+  partner, so the contact entered the dissociation cut twice and
+  `assembly_dissociation` sums repeated pairs: 1ktz's A[2] scored 20.87
+  against PISA's 5.63. `internal_contacts` de-duplicates per (node pair,
+  interface), NOT per direction -- in a 3-fold trimer both branches reach
+  *different* nodes and both are genuine. (b) Assemblies were scored over
+  the top-k subset that closed them rather than their own internal interface
+  graph; `_score` now takes the full edge list.
+- **`asu_molecule_id` is rebuilt from the molecule's own fields**, never by
+  string surgery on `chain_id`. A mate ligand's chain id is
+  `[SO4]H~4_555:623`, and splitting on the mate separator from the right
+  swallowed the residue number, leaving `[SO4]H` -- collapsing every SO4 of
+  that chain onto one node (1a3n held both `[HEM]A` and `[HEM]A:142`).
+- **`_symop_of` matches modulo the cell and returns `None` on a miss.**
+  Requiring the full translation to match found only the cached shell, so a
+  composed placement fell through to a default of 1: on 1urn, 9 of 39 output
+  placements claimed the identity while their rotation was not the identity,
+  and a consumer rebuilding the assembly stacked molecules. Each output
+  molecule now also carries its exact `frac_rotation`/`frac_translation`, so
+  the document is reconstructible regardless of the lookup.
+- Measured vs PISA's own predictions (`multimers.pisa`, cached for all 37
+  reference entries; **34 comparable**, since PISA predicts nothing for
+  1ay7/1brs/1gpw, and **26** have an author-deposited assembly):
+  top-assembly **mmsize match 79.4%**, composition **41.2%**,
+  author-deposited assembly (PISA's `R350`) **73.1%**, recall **88.8%** with
+  **precision 85.8%**. On the three entries PISA calls empty we also predict
+  nothing stable **2 of 3**. Recorded in
+  `tests/data/reference/assembly_validation.json` with both superseded
+  measurements in its `history`, and asserted by
   `tests/test_assembly_vs_pisa.py`. Re-measure with
   `python examples/validate_assemblies.py --record`; do NOT relax the
   assertion instead.
-- **Where the remaining gap is**: recall 82.5% against a 50% top-assembly
-  match means the right assembly is usually GENERATED and merely not ranked
-  first. Both directions occur -- a weak bridging crystal contact grows a
-  dimer into a doubled oligomer (1aay, 1e6e, 9ant, 1cgi), and the nested
-  ordering never closes the full oligomer where PISA does (1a3n ACBD,
-  1ktz A6B6, 2ptc E4I4, 1tro). Closing it needs a stability criterion better
-  than `ΔG_diss > 0`; choosing a threshold against this set would be fitting
-  the reference, which is what QSbio is for.
+- **Report recall WITH precision** and state the denominators. Recall rises
+  mechanically with how many assemblies are emitted, and the match rates
+  exclude the entries where PISA predicts nothing -- which are the clearest
+  false positives, so they are scored separately rather than being free.
+  PISA's ligand-only (mmsize 0) assemblies leave the recall denominator:
+  the ligand-only filter can never match them by design.
+- **Where the remaining gap is**: composition (41.2%) lags stoichiometry
+  (79.4%) mostly because PISA's composition string includes chain-bound
+  hetero groups that `ligand_mode="separate"` keeps as separate molecules
+  (PISA `EI[SO4][ACE]` vs our `EI`) -- a ligand-convention difference, not a
+  wrong assembly.
 - `total_asm = 0` is a real PISA answer (1brs -- no stable assembly for
   barnase-barstar) and round-trips through the reference parser.
 

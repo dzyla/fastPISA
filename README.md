@@ -147,18 +147,28 @@ not an exhaustive search, so exact agreement with PISA is not expected.
 Measured against PISA's own published predictions (`multimers.pisa`) over the
 37 cached entries:
 
-| | agreement |
-|---|---|
-| top assembly, stoichiometry (`mmsize`) | **50.0%** |
-| top assembly, full composition | 26.5% |
-| **author-deposited assembly** (PISA's `R350`) | **50.0%** |
-| recall of PISA's assembly sizes | 82.5% |
+| | agreement | n |
+|---|---|---|
+| top assembly, stoichiometry (`mmsize`) | **79.4%** | 34 |
+| top assembly, full composition | 41.2% | 34 |
+| **author-deposited assembly** (PISA's `R350`) | **73.1%** | 26 |
+| recall of PISA's assembly sizes | 88.8% | 34 |
+| precision (of the sizes we emit) | 85.8% | 34 |
+| PISA predicts nothing — so do we | 2 of 3 | 3 |
 
-Read those together: recall 82.5% against a 50% top match means the right
-assembly is usually *generated* and merely not ranked first. Closing that
-needs a stability criterion better than `ΔG_diss > 0`, and picking one
-against this set would be fitting the reference — so it is reported, not
-tuned. Reproduce with `python examples/validate_assemblies.py`.
+The denominators differ on purpose. PISA predicts no stable assembly at all
+for 1ay7, 1brs and 1gpw, so those have no top assembly to compare — they are
+scored on their own terms instead, because predicting a stable assembly for
+barnase–barstar must cost something. Recall is reported with precision
+because recall alone rises mechanically with how many assemblies are emitted,
+and it excludes PISA's ligand-only assemblies, which our ligand-only filter
+can never match by design.
+
+Composition (41.2%) lags stoichiometry (79.4%) mostly because PISA's
+composition string includes chain-bound hetero groups that
+`ligand_mode="separate"` keeps as separate molecules (PISA `EI[SO4][ACE]`
+against our `EI`) — a ligand-convention difference rather than a wrong
+assembly. Reproduce with `python examples/validate_assemblies.py`.
 
 **Surface backends.** The reference engine is the pure-Python Shrake-Rupley
 implementation in `fastpisa/surface/shrake_rupley.py`; it defines the

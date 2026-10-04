@@ -441,11 +441,29 @@ def compare_assembly_entry(pdb_id: str,
         and _composition_counts(top_reference["composition"])
         == _composition_counts(top_predicted.composition))
 
-    # Did we reproduce PISA's assembly SET, by mmsize?
-    reference_sizes = {a["mmsize"] for a in reference_assemblies}
+    # Did we reproduce PISA's assembly SET, by mmsize? Ligand-only reference
+    # assemblies (PISA reports "[ZN]" and "[SO4][2]" as assemblies, mmsize 0)
+    # leave the denominator: dropping ligand-only components is a deliberate
+    # deviation, so it should not silently cap recall for the 7 entries that
+    # have one. Recall alone also rises mechanically with how many assemblies
+    # we emit, so precision is reported beside it.
+    reference_sizes = {a["mmsize"] for a in reference_assemblies
+                       if a["mmsize"] > 0}
     predicted_sizes = {a.mmsize for a in predicted}
-    recall = (len(reference_sizes & predicted_sizes) / len(reference_sizes)
-              if reference_sizes else 1.0)
+    shared = reference_sizes & predicted_sizes
+    recall = (len(shared) / len(reference_sizes)
+              if reference_sizes else float("nan"))
+    precision = (len(shared) / len(predicted_sizes)
+                 if predicted_sizes else float("nan"))
+    recall_detail = {
+        "reference_sizes": sorted(reference_sizes),
+        "predicted_sizes": sorted(predicted_sizes),
+        "recall": recall,
+        "precision": precision,
+    }
+    # PISA predicting nothing stable is a real answer; do we agree?
+    predicts_nothing_stable = not any(a.dissociation_energy > 0
+                                      for a in predicted)
 
     # The author-deposited assembly: PISA's R350 marks which of its own
     # assemblies the depositor asserted.
@@ -470,6 +488,9 @@ def compare_assembly_entry(pdb_id: str,
         "top_composition_match": composition_match,
         "author_assembly_match": author_match,
         "recall": recall,
+        "precision": precision,
+        "recall_detail": recall_detail,
+        "predicts_nothing_stable": predicts_nothing_stable,
         "rows": [
             {"pdb_id": pdb_id,
              "diss_ref": a["diss_energy"],
@@ -497,7 +518,24 @@ def summarize_assembly_predictions(results: List[dict]) -> Dict[str, float]:
     stats["author_assembly_match_rate"] = (
         sum(r["author_assembly_match"] for r in with_author) / len(with_author)
         if with_author else float("nan"))
-    stats["mean_recall"] = (
-        float(np.mean([r["recall"] for r in comparable]))
-        if comparable else float("nan"))
+    recalls = [r["recall"] for r in comparable
+               if r["recall"] == r["recall"]]        # drop NaN
+    precisions = [r["precision"] for r in comparable
+                  if r["precision"] == r["precision"]]
+    stats["mean_recall"] = (float(np.mean(recalls)) if recalls
+                            else float("nan"))
+    stats["mean_precision"] = (float(np.mean(precisions)) if precisions
+                               else float("nan"))
+
+    # The entries PISA calls empty are where we are most likely to be wrong,
+    # and they leave every match-rate denominator above. Score them on their
+    # own terms: did we also decline to predict a stable assembly?
+    empty = [r for r in results if r["top_reference"] is None]
+    stats["no_reference_assembly"] = {
+        "n_entries": len(empty),
+        "entries": [r["pdb_id"] for r in empty],
+        "we_predict_nothing_stable_rate": (
+            sum(r["predicts_nothing_stable"] for r in empty) / len(empty)
+            if empty else float("nan")),
+    }
     return stats

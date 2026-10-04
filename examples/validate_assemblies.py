@@ -86,7 +86,13 @@ def main():
           f"{100 * stats['author_assembly_match_rate']:.1f}%  "
           f"({stats['n_with_author_assembly']} entries)")
     print(f"recall of PISA's assembly sizes  : "
-          f"{100 * stats['mean_recall']:.1f}%")
+          f"{100 * stats['mean_recall']:.1f}%  "
+          f"(precision {100 * stats['mean_precision']:.1f}%)")
+    empty = stats["no_reference_assembly"]
+    print(f"PISA predicts nothing ({empty['n_entries']} entries): we also "
+          f"predict nothing stable "
+          f"{100 * empty['we_predict_nothing_stable_rate']:.1f}%  "
+          f"{' '.join(empty['entries'])}")
 
     if args.record:
         with open(RECORD, "w") as fh:
@@ -95,6 +101,9 @@ def main():
                             "PISA's own predictions (multimers.pisa) and with "
                             "the author-deposited assembly (PISA's R350)."),
                 "entries": [r["pdb_id"] for r in results],
+                "n_entries": stats["n_entries"],
+                "n_comparable": stats["n_comparable"],
+                "n_with_author_assembly": stats["n_with_author_assembly"],
                 "measured": {
                     "top_mmsize_match_rate": stats["top_mmsize_match_rate"],
                     "top_composition_match_rate":
@@ -102,30 +111,50 @@ def main():
                     "author_assembly_match_rate":
                         stats["author_assembly_match_rate"],
                     "mean_recall": stats["mean_recall"],
+                    "mean_precision": stats["mean_precision"],
+                    "no_reference_assembly": stats["no_reference_assembly"],
                 },
                 "note": (
                     "Nested-interface-subset search in PISA's dissociation "
                     "order, not PISA's exhaustive search, so exact agreement "
-                    "is not expected. WHERE THE REMAINING GAP IS: recall is "
-                    "high while the top-assembly match is about half, so the "
-                    "right assembly is usually GENERATED and merely not "
-                    "ranked first. Both directions occur -- a weak bridging "
-                    "crystal contact grows a dimer into a doubled oligomer "
-                    "(1aay, 1e6e, 9ant, 1cgi), and the nested ordering never "
-                    "closes the full oligomer where PISA does (1a3n ACBD, "
-                    "1ktz A6B6, 2ptc E4I4, 1tro). Closing it needs a "
-                    "stability criterion better than dG_diss > 0, which is "
-                    "what an independent dataset (QSbio) is for; choosing a "
-                    "threshold against THIS set would be fitting the "
-                    "reference. Re-measure with "
+                    "is not expected. Denominators: n_comparable excludes the "
+                    "entries where PISA predicts nothing (they have no top "
+                    "reference assembly); those are scored separately under "
+                    "no_reference_assembly, because predicting a stable "
+                    "assembly for barnase-barstar must cost something. Recall "
+                    "excludes PISA's ligand-only (mmsize 0) assemblies, which "
+                    "our ligand-only filter can never match by design, and is "
+                    "reported with precision because recall alone rises "
+                    "mechanically with how many assemblies we emit. "
+                    "WHERE THE REMAINING GAP IS: composition agreement "
+                    "(41.2%) lags stoichiometry (79.4%) because PISA includes "
+                    "chain-bound hetero groups in its composition string that "
+                    "ligand_mode='separate' keeps as separate molecules "
+                    "(PISA 'EI[SO4][ACE]' vs our 'EI'), so most composition "
+                    "misses are a ligand-convention difference rather than a "
+                    "wrong assembly. Re-measure with "
                     "examples/validate_assemblies.py --record and explain any "
                     "movement."),
                 "history": [
-                    {"ranking": "dG_diss descending (spec R4 as written)",
+                    {"when": "2026-10-04, first measurement",
+                     "ranking": "dG_diss descending (spec R4 as written)",
                      "top_mmsize_match_rate": 0.382,
                      "top_composition_match_rate": 0.206,
                      "author_assembly_match_rate": 0.423,
                      "mean_recall": 0.825},
+                    {"when": "2026-10-04, after the ranking ruling",
+                     "ranking": "largest stable first, dG_diss second",
+                     "top_mmsize_match_rate": 0.500,
+                     "top_composition_match_rate": 0.265,
+                     "author_assembly_match_rate": 0.500,
+                     "mean_recall": 0.825,
+                     "superseded_by": (
+                         "whole-branch review found three scoring/identity "
+                         "defects that depressed these: a self-inverse 2-fold "
+                         "dimer contact counted twice in dG_diss, assemblies "
+                         "scored over the closing interface subset instead of "
+                         "their own internal graph, and symmetry-mate hetero "
+                         "groups collapsing onto one molecule id")},
                 ],
             }, fh, indent=1)
             fh.write("\n")

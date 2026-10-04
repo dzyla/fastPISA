@@ -52,11 +52,14 @@ a change that moves computed numbers is called out explicitly under
   reference set and 732/732 on a blind 60-entry random draw, 1.2% median area
   error, ΔG Pearson 0.995/0.991.
 - **Assembly prediction** (`predict_assemblies=True`, `--predict-assemblies`):
-  enumerates the finite assemblies a crystal admits and ranks them. Measured
-  against PISA's own published predictions over 37 entries: top-assembly
-  stoichiometry 50.0%, composition 26.5%, author-deposited assembly 50.0%,
-  recall of PISA's assembly sizes 82.5%. Read those together — the right
-  assembly is usually generated and merely not ranked first.
+  enumerates the finite assemblies a crystal admits and ranks them, largest
+  stable first. Measured against PISA's own published predictions
+  (`multimers.pisa`, cached for all 37 reference entries): top-assembly
+  stoichiometry **79.4%**, composition 41.2%, **author-deposited assembly
+  73.1%**, recall 88.8% with precision 85.8%; on the three entries where PISA
+  predicts nothing stable we agree on 2 of 3. Denominators and both
+  superseded measurements are recorded in
+  `tests/data/reference/assembly_validation.json`.
 - `FASTPISA_SASA_BACKEND` (`auto` | `python` | `freesasa`) pins the surface
   engine for reproducibility; provenance reports the algorithm and quadrature
   that actually ran.
