@@ -7,10 +7,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12"]
         # Both ASA engines are exercised on the SAME tests. The old
         # "pure-python" leg simply uninstalled freesasa, which made every
@@ -19,6 +20,16 @@ jobs:
         # ASA ~6x too large. Installing both and pinning the engine with
         # FASTPISA_SASA_BACKEND runs the full offline benchmark on each.
         sasa-backend: ["auto", "python"]
+        include:
+          # Most structural biologists run macOS, and Windows has different
+          # line endings and path handling -- both exercise the parser and
+          # the file-writing paths, neither of which ubuntu covers.
+          - os: macos-latest
+            python-version: "3.12"
+            sasa-backend: "auto"
+          - os: windows-latest
+            python-version: "3.12"
+            sasa-backend: "auto"
     env:
       FASTPISA_SASA_BACKEND: ${{ matrix.sasa-backend }}
     steps:

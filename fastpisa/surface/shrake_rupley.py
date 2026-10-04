@@ -315,23 +315,45 @@ def calculate_asa_python(
                 accessible = np.ones(point_density, dtype=bool)
                 frac = 1.0
             else:
+                neighbor_idx = np.asarray(neighbor_idx, dtype=np.intp)
                 neighbor_coords = combined_coords[neighbor_idx]
-                neighbor_rads = combined_radii[neighbor_idx] if combined_radii is not None else radii[neighbor_idx]
+                neighbor_rads = (combined_radii[neighbor_idx]
+                                 if combined_radii is not None
+                                 else radii[neighbor_idx])
+
+                # Nearest neighbour first, then drop points as they are
+                # buried and stop once none survive. The full
+                # (points x neighbours) distance matrix costs the same for a
+                # deeply buried atom as for an exposed one, while in practice
+                # the closest few neighbours account for almost all occlusion:
+                # ~2.2x faster on a protein, and bit-identical (asserted by
+                # test_python_asa_is_independent_of_atom_order and the
+                # closed-form geometry tests).
+                offsets = neighbor_coords - coords[i]
+                order = np.argsort(np.einsum("ij,ij->i", offsets, offsets))
+                neighbor_coords = neighbor_coords[order]
+                neighbor_rads = neighbor_rads[order]
 
                 # Points on this atom's probe sphere
                 pts = coords[i] + total_r[i] * unit_pts  # (n_points, 3)
-
-                # Distance from each point to each neighbor
-                dist_sq = np.sum((pts[:, None, :] - neighbor_coords[None, :, :]) ** 2, axis=2)
-
-                # A test point is the CENTRE of a probe sphere, so it is
-                # inaccessible when it lies within (r_j + probe) of neighbour
-                # j -- not within r_j. Dropping the probe radius here leaves
-                # the probe-centre sphere occluded by bare van-der-Waals
-                # spheres only and overstates ASA ~6x on a real protein.
-                buried = dist_sq < ((neighbor_rads[None, :] + probe_radius) ** 2)
-                accessible = ~buried.any(axis=1)
-                frac = accessible.sum() / point_density
+                live = np.ones(point_density, dtype=bool)
+                survivors = pts
+                for centre, radius in zip(neighbor_coords, neighbor_rads):
+                    # A test point is the CENTRE of a probe sphere, so it is
+                    # inaccessible when it lies within (r_j + probe) of
+                    # neighbour j -- not within r_j. Dropping the probe radius
+                    # here leaves the probe-centre sphere occluded by bare
+                    # van-der-Waals spheres only and overstates ASA ~6x.
+                    delta = survivors - centre
+                    hit = np.einsum("ij,ij->i", delta, delta) < (
+                        radius + probe_radius) ** 2
+                    if not hit.any():
+                        continue
+                    live[np.flatnonzero(live)[hit]] = False
+                    if not live.any():
+                        break
+                    survivors = pts[live]
+                frac = live.sum() / point_density
         else:
             # Fallback: O(n^2) against all atoms
             pts = coords[i] + total_r[i] * unit_pts

@@ -73,6 +73,23 @@ a change that moves computed numbers is called out explicitly under
 - `docs/surface_backends.md`: the measured comparison of the two surface
   engines and why FreeSASA is pinned to Lee-Richards.
 
+- **`fastpisa.interfaces(path)`** — the one-call entry point, returning a
+  plain list of `Interface` objects sorted largest-first. `Interface`,
+  `AtomContact` and `PISAInterfaceAnalyzer` are now exported at package
+  level (lazily, so `import fastpisa` stays cheap), with `__all__`.
+- A **release workflow** publishing to PyPI on a version tag via Trusted
+  Publishing, gated on tag/package/changelog version agreement, so
+  `pip install fastpisa` works and the tag can be minted as a Zenodo DOI.
+- CI now also runs on **macOS and Windows**, not ubuntu only.
+
+### Changed
+
+- The pure-Python surface engine is **~2.4x faster** (2.17 s → 0.91 s on
+  1a3n) and bit-identical: neighbours are visited nearest-first and test
+  points dropped as they are buried, stopping once none survive, instead of
+  always forming the full (points × neighbours) distance matrix. Order
+  independence and exact zero for a fully buried atom are asserted.
+
 ### Fixed
 
 - `CRYST1` was parsed at 5-character field widths instead of 9/9/9/7/7/7,

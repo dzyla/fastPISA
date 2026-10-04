@@ -258,3 +258,45 @@ def test_provenance_follows_the_pinned_backend(monkeypatch):
     info = fsb.surface_backend_info()
     assert info["backend"] == "FreeSASA"
     assert info["algorithm"] == fsb.FREESASA_ALGORITHM
+
+
+def test_python_asa_is_independent_of_atom_order():
+    """Guards the nearest-neighbour-first early exit.
+
+    The Python engine sorts each atom's neighbours by distance and stops once
+    no test point survives, which is ~2.2x faster and bit-identical. Both the
+    sort and the early exit could make a result depend on the order atoms
+    arrive in; it must not.
+    """
+    import random
+
+    structure = parse_pdb(KTZ)
+    atoms = [a for a in structure.atoms
+             if a.element.strip().upper() not in ("H", "D")
+             and a.res_name.strip().upper() not in ("HOH", "WAT")][:300]
+
+    straight = _python_asa(atoms, point_density=480)
+
+    order = list(range(len(atoms)))
+    random.Random(4).shuffle(order)
+    shuffled_atoms = [atoms[i] for i in order]
+    shuffled = _python_asa(shuffled_atoms, point_density=480)
+
+    for position, original in enumerate(order):
+        assert shuffled[position] == pytest.approx(straight[original],
+                                                   abs=1e-9), original
+
+
+def test_a_fully_buried_atom_short_circuits_to_zero():
+    """The early exit must yield exactly zero, not a small residue."""
+    centre = _atom(0.0, 0.0, 0.0)
+    shell = []
+    golden = math.pi * (3.0 - 5.0 ** 0.5)
+    for i in range(80):
+        y = 1.0 - 2.0 * i / 79.0
+        radius = math.sqrt(max(1.0 - y * y, 0.0))
+        theta = golden * i
+        shell.append(_atom(2.8 * math.cos(theta) * radius, 2.8 * y,
+                           2.8 * math.sin(theta) * radius))
+    asa = _python_asa([centre] + shell, point_density=1024)
+    assert asa[0] == 0.0

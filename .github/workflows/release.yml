@@ -1,0 +1,69 @@
+name: Release
+
+# Publishes to PyPI when a version tag is pushed, so `pip install fastpisa`
+# works and the tag can be minted as a Zenodo DOI (a tool that cannot be
+# cited does not get used in papers).
+#
+# Setup needed once, outside this file:
+#   - a PyPI Trusted Publisher for this repository and the `pypi` environment
+#     (no API token to leak), and
+#   - the GitHub-Zenodo integration switched on for the repository, which
+#     mints a DOI per release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  guard:
+    # A tag that disagrees with the package version would publish a release
+    # whose metadata points at a different version than the code.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tag, package and citation versions must agree
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+          pytest tests/test_packaging.py -q
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(python -c "import fastpisa; print(fastpisa.__version__)")
+          if [ -n "$TAG" ] && [ "$TAG" != "$PKG" ]; then
+            echo "tag $TAG != package $PKG"; exit 1
+          fi
+      - name: The changelog must describe this version
+        run: grep -q "$(python -c 'import fastpisa; print(fastpisa.__version__)')" CHANGELOG.md
+
+  build:
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write          # PyPI Trusted Publishing; no stored token
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

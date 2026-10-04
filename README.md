@@ -93,6 +93,29 @@ weak C–H bonds use explicit-H angles), pinned in
 
 ## Install
 
+## Getting interfaces, in three lines
+
+```python
+import fastpisa
+
+for interface in fastpisa.interfaces("complex.pdb"):      # largest first
+    print(interface.label, round(interface.interface_area), interface.solvation_energy)
+    for bond in interface.hydrogen_bonds:
+        print("   ", bond.label)
+```
+
+`fastpisa.interfaces()` returns a plain list of `Interface` objects sorted by
+buried area, so the interface you care about is `[0]`. Each one carries its
+area, solvation and stabilisation energies, P-value, CSS, bond counts and the
+bonds themselves; `interface.residues()` gives the per-residue ASA/BSA table
+and `interface.bonds_dataframe()` a pandas frame. Pass any
+`PISAInterfaceAnalyzer` option through — `mode`, `ligand_mode`, `symmetry`,
+`predict_assemblies`, `interface_cutoff`.
+
+For the full PDBe-shaped JSON documents, assembly totals and file output use
+`fastpisa.analyze(...)`; to re-run with different options or load AlphaFold
+confidence, hold a `PISAInterfaceAnalyzer`.
+
 ```bash
 cd fastPISA
 pip install -e .
