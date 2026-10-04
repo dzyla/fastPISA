@@ -70,6 +70,10 @@ class PISAInterfaceAnalyzer:
         interfaces -- including the packing contacts original PISA reports
         for a deposited entry, which are 60% of its output. Needs a usable
         cell and space group; without one it is a no-op.
+    predict_assemblies : bool
+        Also enumerate the finite assemblies the crystal can form and rank
+        them by dissociation energy, on :attr:`assemblies` and in the
+        assembly JSON. Off by default.
 
     Attributes
     ----------
@@ -95,6 +99,7 @@ class PISAInterfaceAnalyzer:
         min_css: float = 0.0,
         ligand_mode: str = "separate",
         symmetry: str = "none",
+        predict_assemblies: bool = False,
     ):
         self.path = Path(path)
         if not self.path.exists():
@@ -113,9 +118,17 @@ class PISAInterfaceAnalyzer:
         #: interfaces, including packing contacts -- what original PISA does
         #: for a deposited entry).
         self.symmetry = symmetry
+        #: Also enumerate the assemblies the crystal can form and rank them
+        #: by dissociation energy. Off by default: it is a search over
+        #: interface subsets.
+        self.predict_assemblies = predict_assemblies
 
         # Populated by analyze()
         self.interfaces: List[Interface] = []
+        #: Predicted assemblies, most stable first
+        #: (:class:`fastpisa.assembly.predict.Assembly`); empty unless
+        #: ``predict_assemblies=True``.
+        self.assemblies: List = []
         #: Cheapest dissociation pathway of the analysed coordinates
         #: (:class:`fastpisa.energy.dissociation.DissociationPathway`), the
         #: cut and released bodies behind ``assembly_json``'s
@@ -185,6 +198,7 @@ class PISAInterfaceAnalyzer:
             min_css=self.min_css,
             ligand_mode=self.ligand_mode,
             symmetry=self.symmetry,
+            predict_assemblies=self.predict_assemblies,
         )
         if self.mode not in MODES:
             raise ValueError(
@@ -194,6 +208,7 @@ class PISAInterfaceAnalyzer:
         self.result = result
         self.interfaces = result.get("interfaces_obj", [])
         self.dissociation_pathway = result.get("dissociation_pathway")
+        self.assemblies = result.get("assemblies", [])
         self._interfaces_json = result["interfaces"]
         self._assembly_json = result["assembly"]
         return result
@@ -247,6 +262,7 @@ class PISAInterfaceAnalyzer:
                 if self.symmetry == "crystal"
                 else "first model only; no symmetry generation"),
             "symmetry": self.symmetry,
+            "predict_assemblies": self.predict_assemblies,
             "probe_radius_A": self.probe_radius,
             "point_density": self.point_density,
             "contact_cutoff_A": self.interface_cutoff,

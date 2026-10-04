@@ -34,7 +34,7 @@ Each interface entry also carries PDBe-shaped bond tables (hydrogen_bonds,
 salt_bridges, disulfide_bonds, covalent_bonds), whose lengths equal the matching
 number_* counts by construction.
 """
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 def _interface_entry(iface: Any) -> Dict[str, Any]:
@@ -130,9 +130,16 @@ def build_assembly_json(
     assembly_solvation_energy_gain: float,
     assembly_formula: str,
     assembly_composition: str,
+    predicted_assemblies: Optional[List[dict]] = None,
 ) -> Dict[str, Any]:
-    """The assembly-level document, without per-interface detail."""
-    return {
+    """The assembly-level document, without per-interface detail.
+
+    ``predicted_assemblies`` (crystal mode with ``predict_assemblies=True``)
+    is omitted entirely rather than emitted as null when absent, so a
+    consumer can test membership -- the same convention the COCOMAPS contact
+    map uses on an interface entry.
+    """
+    document = {
         "assembly": {
             "pdb_id": pdb_id,
             "assembly_id": str(assembly_id),
@@ -148,3 +155,6 @@ def build_assembly_json(
             "composition": assembly_composition,
         }
     }
+    if predicted_assemblies:
+        document["assembly"]["predicted_assemblies"] = predicted_assemblies
+    return document

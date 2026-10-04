@@ -52,6 +52,7 @@ from fastpisa.output.json_output import build_interfaces_json, build_assembly_js
 from fastpisa.assembly.crystal import (
     IDENTITY_COPY, copy_by_label, expand_structure, split_mate_chain_id,
 )
+from fastpisa.assembly.predict import Assembly, predict_assemblies as _predict
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,22 @@ class CoreState:
     assembly_bsa: float
     total_asa_alone: Dict[int, float]
     interfaces: List[Interface] = field(default_factory=list)
+    #: Assemblies the crystal can form, most stable first. Populated only
+    #: when ``run_core(predict_assemblies=True)``.
+    assemblies: List[Assembly] = field(default_factory=list)
+
+
+@dataclass
+class _CoreStateView:
+    """The four fields assembly prediction reads, available mid-run.
+
+    ``predict_assemblies`` runs before :class:`CoreState` is constructed, so
+    it is handed just the pieces it needs rather than a half-built state.
+    """
+    atoms: list
+    molecules: List[dict]
+    masks: List[np.ndarray]
+    interfaces: List[Interface]
 
 
 def _integer_inverse(matrix: np.ndarray) -> np.ndarray:
@@ -162,6 +179,7 @@ def run_core(
     ligand_mode: str = "separate",
     collect_calibration: bool = False,
     symmetry: str = "none",
+    predict_assemblies: bool = False,
 ) -> CoreState:
     """Run the shared analysis once and return the populated interfaces.
 
@@ -175,6 +193,11 @@ def run_core(
     mates, as original PISA does for a deposited entry). ``"crystal"`` needs
     a usable ``CRYST1``/``_cell`` plus space group; without one it is a
     no-op, which is the right answer for a predicted model.
+
+    ``predict_assemblies``: also enumerate the finite assemblies the crystal
+    can form and rank them by dissociation energy
+    (:mod:`fastpisa.assembly.predict`). Off by default -- it is a search over
+    interface subsets and no existing caller should pay for it.
 
     ``collect_calibration``: also record, on each interface's ``calibration``
     dict, the sufficient statistics for refitting the ASP sigmas and the
@@ -654,6 +677,12 @@ def run_core(
         for idx, iface in enumerate(interfaces):
             iface.interface_id = idx + 1
 
+    assemblies: List[Assembly] = []
+    if predict_assemblies:
+        assemblies = _predict(_CoreStateView(
+            atoms=atoms, molecules=molecules, masks=masks,
+            interfaces=interfaces))
+
     return CoreState(
         structure=structure,
         atoms=atoms,
@@ -666,6 +695,7 @@ def run_core(
         assembly_bsa=assembly_bsa,
         total_asa_alone=total_asa_alone,
         interfaces=interfaces,
+        assemblies=assemblies,
     )
 
 
@@ -743,6 +773,20 @@ def dissociation_pathway(state: CoreState) -> DissociationPathway:
     return pathway
 
 
+def _symop_of(state, molecule_id: str, placement) -> int:
+    """Symmetry-operation number of a placement, for the output document."""
+    for iface in state.interfaces:
+        for mol in iface.molecules:
+            if (mol.get("asu_molecule_id") == molecule_id
+                    and tuple(tuple(int(v) for v in row)
+                              for row in mol.get("frac_rotation", ()))
+                    == placement.rotation
+                    and tuple(int(v) for v in mol.get("frac_translation", ()))
+                    == placement.translation):
+                return int(mol.get("symop_no", 1))
+    return 1
+
+
 def build_documents(
     state: CoreState,
     pdb_id: str = "unknown",
@@ -768,6 +812,27 @@ def build_documents(
     pathway = dissociation_pathway(state)
     diss_energy = pathway.dissociation_energy
     assembly_entropy = pathway.entropy
+
+    predicted = [
+        {
+            "rank": a.rank,
+            "size": a.size,
+            "mmsize": a.mmsize,
+            "composition": a.composition,
+            "formula": a.formula,
+            "dissociation_energy": round(a.dissociation_energy, 2),
+            "entropy": round(a.entropy, 2),
+            "n_interfaces": a.n_interfaces,
+            "interface_ids": [int(i) for i in a.interface_ids],
+            "molecules": [
+                {"asu_molecule_id": molecule,
+                 "symop_no": _symop_of(state, molecule, placement),
+                 "cell": [int(v) for v in placement.cell()]}
+                for molecule, placement in a.nodes
+            ],
+        }
+        for a in getattr(state, "assemblies", [])
+    ]
 
     formula = _build_formula(molecules)
     composition = _build_composition(molecules)
@@ -796,6 +861,7 @@ def build_documents(
     )
     assembly_json = build_assembly_json(
         assembly_size=str(len(molecules)),
+        predicted_assemblies=predicted,
         **common,
     )
 
@@ -804,6 +870,7 @@ def build_documents(
         "assembly": assembly_json,
         "interfaces_obj": interfaces,
         "dissociation_pathway": pathway,
+        "assemblies": list(getattr(state, "assemblies", [])),
     }
 
 
@@ -820,6 +887,7 @@ def analyze(
     interaction_cutoff: float = 5.0,
     ligand_mode: str = "separate",
     symmetry: str = "none",
+    predict_assemblies: bool = False,
 ) -> dict:
     """One-call analysis: run the core in the given mode and build the JSON."""
     state = run_core(
@@ -833,6 +901,7 @@ def analyze(
         interaction_cutoff=interaction_cutoff,
         ligand_mode=ligand_mode,
         symmetry=symmetry,
+        predict_assemblies=predict_assemblies,
     )
     return build_documents(state, pdb_id=pdb_id, assembly_id=assembly_id)
 

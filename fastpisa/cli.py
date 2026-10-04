@@ -78,6 +78,12 @@ def main():
         help="Interface atom cutoff distance (default: 5.0 A)",
     )
     parser.add_argument(
+        "--predict-assemblies", action="store_true",
+        help="enumerate the assemblies the crystal can form and rank them by "
+             "dissociation energy (a search over interface subsets; most "
+             "useful with --symmetry crystal)",
+    )
+    parser.add_argument(
         "--symmetry", choices=("none", "crystal"), default="none",
         help="'crystal' expands the asymmetric unit by its space group and "
              "reports packing interfaces with symmetry mates, as original "
@@ -200,6 +206,7 @@ def main():
         mode=args.mode,
         exclude_water=args.exclude_water,
         symmetry=args.symmetry,
+        predict_assemblies=args.predict_assemblies,
         min_css=args.min_css,
         ligand_mode=args.ligand_mode,
     )
@@ -266,6 +273,13 @@ def main():
     print(f"Assembly dissociation energy: {asm['dissociation_energy']}")
     print(f"Total ASA: {asm['accessible_surface_area']}")
     print(f"Total BSA: {asm['buried_surface_area']}")
+
+    if analyzer.assemblies:
+        print("\nPredicted assemblies (most stable first):")
+        for assembly in analyzer.assemblies[:5]:
+            print(f"  {assembly.rank}. {assembly.composition} "
+                  f"(size {assembly.size}, mm {assembly.mmsize})  "
+                  f"dG_diss {assembly.dissociation_energy:+.2f} kcal/mol")
 
     if args.hotspots and analyzer.interfaces:
         print(f"\nTop {args.hotspots} hotspot residues (by buried area):")
