@@ -1,0 +1,58 @@
+{
+ "purpose": "Measured agreement of assembly prediction with PISA's own predictions (multimers.pisa) and with the author-deposited assembly (PISA's R350).",
+ "entries": [
+  "1a3n",
+  "1aay",
+  "1acb",
+  "1ay7",
+  "1brs",
+  "1cbw",
+  "1cgi",
+  "1cho",
+  "1dfj",
+  "1e6e",
+  "1eaw",
+  "1f34",
+  "1fdl",
+  "1fin",
+  "1gcq",
+  "1gpw",
+  "1jck",
+  "1ktz",
+  "1lmb",
+  "1nca",
+  "1oph",
+  "1ppf",
+  "1prc",
+  "1r0r",
+  "1rva",
+  "1stf",
+  "1tro",
+  "1tsr",
+  "1urn",
+  "1vfb",
+  "2ptc",
+  "2sni",
+  "3cro",
+  "3hfm",
+  "3hhr",
+  "4ins",
+  "9ant"
+ ],
+ "measured": {
+  "top_mmsize_match_rate": 0.5,
+  "top_composition_match_rate": 0.2647058823529412,
+  "author_assembly_match_rate": 0.5,
+  "mean_recall": 0.8248249299719889
+ },
+ "note": "Nested-interface-subset search in PISA's dissociation order, not PISA's exhaustive search, so exact agreement is not expected. WHERE THE REMAINING GAP IS: recall is high while the top-assembly match is about half, so the right assembly is usually GENERATED and merely not ranked first. Both directions occur -- a weak bridging crystal contact grows a dimer into a doubled oligomer (1aay, 1e6e, 9ant, 1cgi), and the nested ordering never closes the full oligomer where PISA does (1a3n ACBD, 1ktz A6B6, 2ptc E4I4, 1tro). Closing it needs a stability criterion better than dG_diss > 0, which is what an independent dataset (QSbio) is for; choosing a threshold against THIS set would be fitting the reference. Re-measure with examples/validate_assemblies.py --record and explain any movement.",
+ "history": [
+  {
+   "ranking": "dG_diss descending (spec R4 as written)",
+   "top_mmsize_match_rate": 0.382,
+   "top_composition_match_rate": 0.206,
+   "author_assembly_match_rate": 0.423,
+   "mean_recall": 0.825
+  }
+ ]
+}

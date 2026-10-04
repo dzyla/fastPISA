@@ -364,3 +364,140 @@ def summarize_crystal(results: List[dict]) -> Dict[str, float]:
     stats["dg_pearson"] = _pearson(dg_fp, dg_ref)
     stats["dg_median_abs_err"] = float(np.median(np.abs(dg_fp - dg_ref)))
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Assembly prediction vs PISA's own predicted assemblies
+# ---------------------------------------------------------------------------
+def _composition_counts(composition: str) -> dict:
+    """``'E[4]I[4][CA][4]'`` -> ``{'E': 4, 'I': 4, '[CA]': 4}``.
+
+    PISA writes a bracketed CCD code for a hetero group and a bracketed
+    integer for a repeat count, so the two uses of brackets have to be told
+    apart: a bracket group whose contents are digits is a count for the token
+    before it.
+    """
+    import re
+
+    counts: dict = {}
+    tokens = re.findall(r"\[[^\]]*\]|[A-Za-z0-9]", composition or "")
+    current = None
+    for token in tokens:
+        if token.startswith("[") and token[1:-1].isdigit():
+            if current is not None:
+                counts[current] = counts.get(current, 0) + int(token[1:-1]) - 1
+            continue
+        current = token
+        counts[current] = counts.get(current, 0) + 1
+    return counts
+
+
+def compare_assembly_entry(pdb_id: str,
+                           allow_fetch: bool = True) -> Optional[dict]:
+    """Compare predicted assemblies against PISA's own for one entry.
+
+    Returns ``None`` when the multimer reference or the coordinates are not
+    available. ``reference_total == 0`` is a real answer, not an error: PISA
+    predicts no stable assembly for some entries.
+    """
+    from fastpisa.core import run_core
+    from fastpisa.reference.ebi_pisa import (
+        cached_pdb_path, fetch_pdb_file, fetch_pisa_multimers,
+        load_cached_multimers, parse_pisa_multimers,
+    )
+
+    reference = load_cached_multimers(pdb_id)
+    if reference is None:
+        if not allow_fetch:
+            return None
+        try:
+            reference = parse_pisa_multimers(fetch_pisa_multimers(pdb_id))
+        except Exception:
+            return None
+    path = cached_pdb_path(pdb_id)
+    if path is None:
+        if not allow_fetch:
+            return None
+        try:
+            path = fetch_pdb_file(pdb_id)
+        except Exception:
+            return None
+
+    state = run_core(path, mode="pisa", symmetry="crystal",
+                     predict_assemblies=True)
+    predicted = state.assemblies
+
+    # PISA's primary prediction is the first assembly of the first set.
+    reference_assemblies = sorted(
+        reference["assemblies"], key=lambda a: (a["set_no"], a["id"]))
+    top_reference = reference_assemblies[0] if reference_assemblies else None
+    top_predicted = predicted[0] if predicted else None
+
+    mmsize_match = bool(
+        top_reference and top_predicted
+        and top_reference["mmsize"] == top_predicted.mmsize)
+    composition_match = bool(
+        top_reference and top_predicted
+        and _composition_counts(top_reference["composition"])
+        == _composition_counts(top_predicted.composition))
+
+    # Did we reproduce PISA's assembly SET, by mmsize?
+    reference_sizes = {a["mmsize"] for a in reference_assemblies}
+    predicted_sizes = {a.mmsize for a in predicted}
+    recall = (len(reference_sizes & predicted_sizes) / len(reference_sizes)
+              if reference_sizes else 1.0)
+
+    # The author-deposited assembly: PISA's R350 marks which of its own
+    # assemblies the depositor asserted.
+    author = next((a for a in reference_assemblies if a["r350"]), None)
+    author_match = (None if author is None
+                    else bool(top_predicted
+                              and top_predicted.mmsize == author["mmsize"]))
+
+    return {
+        "pdb_id": pdb_id,
+        "reference_total": reference["total_asm"],
+        "predicted_total": len(predicted),
+        "top_reference": top_reference,
+        "top_predicted": (None if top_predicted is None else {
+            "composition": top_predicted.composition,
+            "formula": top_predicted.formula,
+            "size": top_predicted.size,
+            "mmsize": top_predicted.mmsize,
+            "dissociation_energy": top_predicted.dissociation_energy,
+        }),
+        "top_mmsize_match": mmsize_match,
+        "top_composition_match": composition_match,
+        "author_assembly_match": author_match,
+        "recall": recall,
+        "rows": [
+            {"pdb_id": pdb_id,
+             "diss_ref": a["diss_energy"],
+             "mmsize_ref": a["mmsize"]}
+            for a in reference_assemblies
+        ],
+    }
+
+
+def summarize_assembly_predictions(results: List[dict]) -> Dict[str, float]:
+    """Match rates over several :func:`compare_assembly_entry` results."""
+    comparable = [r for r in results if r["top_reference"] is not None]
+    with_author = [r for r in results if r["author_assembly_match"] is not None]
+    stats = {
+        "n_entries": len(results),
+        "n_comparable": len(comparable),
+        "n_with_author_assembly": len(with_author),
+    }
+    stats["top_mmsize_match_rate"] = (
+        sum(r["top_mmsize_match"] for r in comparable) / len(comparable)
+        if comparable else float("nan"))
+    stats["top_composition_match_rate"] = (
+        sum(r["top_composition_match"] for r in comparable) / len(comparable)
+        if comparable else float("nan"))
+    stats["author_assembly_match_rate"] = (
+        sum(r["author_assembly_match"] for r in with_author) / len(with_author)
+        if with_author else float("nan"))
+    stats["mean_recall"] = (
+        float(np.mean([r["recall"] for r in comparable]))
+        if comparable else float("nan"))
+    return stats

@@ -255,9 +255,22 @@ def predict_assemblies(state,
                 or assembly.dissociation_energy > previous.dissociation_energy):
             by_content[key] = assembly
 
-    ranked = sorted(by_content.values(),
-                    key=lambda a: (-a.dissociation_energy, -a.size,
-                                   a.composition))
+    # The primary assembly is the largest STABLE one, not the most strongly
+    # bound. dG_diss measures an assembly's weakest link, so it is not
+    # monotonic in size: a tight dimer can out-score the tetramer containing
+    # it, and a chain plus a bound ion scores high because pulling the ion
+    # off costs area for almost no entropy gain. PISA's own output settles
+    # the convention -- its first assembly has the largest mmsize in 31 of 34
+    # cached entries and the highest dG_diss in only 25 of 34 -- so stable
+    # assemblies order by macromolecular size first and dG_diss second.
+    # dG_diss is still reported per assembly for callers who want it.
+    ranked = sorted(
+        by_content.values(),
+        key=lambda a: (a.dissociation_energy <= 0,          # stable first
+                       -a.mmsize,
+                       -a.dissociation_energy,
+                       -a.size,
+                       a.composition))
     for position, assembly in enumerate(ranked, start=1):
         assembly.rank = position
     return ranked

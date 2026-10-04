@@ -38,11 +38,51 @@ def test_1acb_predicts_the_heterodimer_pisa_predicts():
     assert top.dissociation_energy > 0
 
 
-def test_assemblies_are_ranked_by_dissociation_energy():
+def test_the_primary_assembly_is_the_largest_stable_one():
+    """Rank 1 is the biggest STABLE assembly, not the most strongly bound.
+
+    dG_diss measures an assembly's weakest link, so it is not monotonic in
+    size: a tight dimer can out-score the tetramer that contains it, and a
+    chain plus a bound ion scores high because pulling an ion off costs a lot
+    of area for almost no entropy gain. Ranking by dG_diss alone put mmsize=1
+    "assemblies" first for 1aay, 1gpw and 1tsr and scored 38.2% agreement
+    with PISA's primary assembly.
+
+    PISA's own cached output settles it: its first assembly has the largest
+    mmsize in 31 of 34 entries, and the highest dG_diss in only 25 of 34. So
+    stable assemblies rank by mmsize first, dG_diss second; unstable ones
+    (dG_diss <= 0) come after, by dG_diss.
+    """
     assemblies = predict_assemblies(_crystal("1a3n"))
-    energies = [a.dissociation_energy for a in assemblies]
-    assert energies == sorted(energies, reverse=True)
+    assert assemblies
+    stable = [a for a in assemblies if a.dissociation_energy > 0]
+    assert stable, "1a3n must have at least one stable assembly"
+    # Rank 1 is stable and no stable assembly is larger.
+    assert assemblies[0].dissociation_energy > 0
+    assert assemblies[0].mmsize == max(a.mmsize for a in stable)
+    # Within the stable block the order is (mmsize desc, dG_diss desc).
+    keys = [(-a.mmsize, -a.dissociation_energy) for a in stable]
+    assert keys == sorted(keys)
+    # Unstable assemblies never precede a stable one.
+    first_unstable = next(
+        (i for i, a in enumerate(assemblies) if a.dissociation_energy <= 0),
+        len(assemblies))
+    assert all(a.dissociation_energy > 0 for a in assemblies[:first_unstable])
+    assert all(a.dissociation_energy <= 0 for a in assemblies[first_unstable:])
     assert [a.rank for a in assemblies] == list(range(1, len(assemblies) + 1))
+
+
+def test_a_chain_plus_its_cofactor_is_not_the_primary_assembly():
+    """mmsize=1 must not outrank a genuine multimer."""
+    for pdb_id in ("1aay", "1tsr"):
+        assemblies = predict_assemblies(_crystal(pdb_id))
+        assert assemblies
+        multimers = [a for a in assemblies
+                     if a.mmsize >= 2 and a.dissociation_energy > 0]
+        if multimers:
+            assert assemblies[0].mmsize >= 2, (
+                f"{pdb_id}: rank 1 is {assemblies[0].composition} "
+                f"(mmsize {assemblies[0].mmsize})")
 
 
 def test_duplicate_assemblies_are_collapsed():
