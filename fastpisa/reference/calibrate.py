@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Reproducible refit and honest evaluation of fastPISA's fitted constants.
 
 Three constants sets in fastPISA are *fitted*, not derived:

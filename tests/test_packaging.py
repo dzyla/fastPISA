@@ -3,9 +3,15 @@
 Three of these are adoption blockers rather than code defects:
 
 * **No LICENSE file.** ``pyproject.toml`` and ``CITATION.cff`` both declared
-  MIT while the repository carried no licence text, so by default the code
-  was all-rights-reserved: an institutional legal review stops there and
-  nobody can legally reuse it.
+  a licence while the repository carried no licence text, so by default the
+  code was all-rights-reserved: an institutional legal review stops there
+  and nobody can legally reuse it.
+
+The licence is **AGPL-3.0-or-later** with an additional attribution term
+under its section 7(b). The choice is deliberate and these tests pin the
+parts that carry the intent: strong copyleft so a modified version stays
+open, the section 13 network clause so hosting it as a service also
+triggers disclosure, and a preserved citation notice.
 * **Version drift.** ``CITATION.cff`` said 0.2.0 while the package said
   0.4.0, so a citation pointed at a version that never produced the numbers
   being cited.
@@ -46,15 +52,47 @@ def _citation_field(field):
 
 
 def test_a_licence_file_exists_and_matches_the_declared_licence():
-    """Without this file the declared MIT licence is not actually granted."""
+    """Without this file the declared licence is not actually granted."""
     assert os.path.exists(os.path.join(REPO, "LICENSE")), (
-        "no LICENSE file: pyproject.toml declares MIT but the repository "
-        "grants nothing, so the code is all-rights-reserved by default")
+        "no LICENSE file: pyproject.toml declares a licence but the "
+        "repository grants nothing, so the code is all-rights-reserved")
     text = _read("LICENSE")
-    assert "MIT License" in text
-    assert "Permission is hereby granted, free of charge" in text
+    assert "GNU AFFERO GENERAL PUBLIC LICENSE" in text
+    assert "Version 3, 19 November 2007" in text
     assert re.search(r"Copyright \(c\) \d{4}", text), "no copyright line"
-    assert 'THE SOFTWARE IS PROVIDED "AS IS"' in text
+
+
+def test_the_licence_text_is_the_unmodified_agpl():
+    """A paraphrased licence is not a licence. Pin the operative clauses.
+
+    These three are why AGPL was chosen over MIT or plain GPL: section 13
+    closes the hosting loophole, section 5(c) is the copyleft that keeps a
+    modified version open, and section 7(b) is what makes the attribution
+    requirement binding rather than a request.
+    """
+    text = _read("LICENSE")
+    # The licence wraps its clauses, so compare on collapsed whitespace.
+    flat = " ".join(text.split())
+    assert "13. Remote Network Interaction" in text
+    assert "modified version must prominently offer all users" in flat
+    assert "7. Additional Terms" in text
+    assert ("Requiring preservation of specified reasonable legal notices "
+            "or author attributions") in flat
+    # The full text, not an excerpt.
+    assert len(text) > 34000, f"LICENSE is only {len(text)} bytes"
+
+
+def test_the_licence_carries_the_citation_term():
+    """The 7(b) term and how to cite must be in the LICENSE itself.
+
+    A citation request living only in the README is not a licence term, and
+    a downstream user reads the LICENSE.
+    """
+    text = _read("LICENSE")
+    head = text[:text.index("GNU AFFERO GENERAL PUBLIC LICENSE")]
+    assert "7(b)" in head or "Section 7(b)" in head
+    assert "CITATION.cff" in head
+    assert "AGPL-3.0-or-later" in head
 
 
 def test_the_version_is_the_same_everywhere():
@@ -79,7 +117,20 @@ def test_the_citation_names_a_person_a_reference_manager_can_render():
 
 
 def test_the_citation_declares_the_same_licence_as_the_package():
-    assert _citation_field("license") == "MIT"
+    assert _citation_field("license") == "AGPL-3.0-or-later"
+
+
+def test_the_packaging_metadata_declares_the_licence_by_spdx_id():
+    """A classifier or SPDX id is what dependency scanners read."""
+    text = _read("pyproject.toml")
+    assert "AGPL-3.0-or-later" in text
+    assert "MIT" not in text, "stale MIT declaration in pyproject.toml"
+
+
+def test_the_author_is_named_for_citation():
+    """``name = "dzyla"`` is a username, not an author of a cited work."""
+    text = _read("pyproject.toml")
+    assert "Dawid Zyla" in text
 
 
 def test_a_changelog_exists_and_covers_the_current_version():
@@ -95,3 +146,25 @@ def test_a_changelog_exists_and_covers_the_current_version():
 
 def test_the_package_exposes_its_version():
     assert re.fullmatch(r"\d+\.\d+\.\d+", fastpisa.__version__)
+
+
+def test_every_shipped_module_carries_the_spdx_tag():
+    """A copied file must carry its licence.
+
+    The root LICENSE covers the project as distributed, but a copyleft
+    licence's weak point is a single module lifted into another codebase: a
+    file with no notice looks unlicensed to whoever finds it, and to every
+    automated licence scanner. One SPDX line per file closes that.
+    """
+    missing = []
+    for root, dirs, files in os.walk(os.path.join(REPO, "fastpisa")):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        for name in sorted(files):
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(root, name)
+            with open(path, encoding="utf-8") as fh:
+                head = fh.read(400)
+            if "SPDX-License-Identifier: AGPL-3.0-or-later" not in head:
+                missing.append(os.path.relpath(path, REPO))
+    assert not missing, f"{len(missing)} modules without an SPDX tag: {missing[:5]}"

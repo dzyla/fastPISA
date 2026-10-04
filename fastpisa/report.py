@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Manuscript-ready digests of the interface between two groups of chains.
 
 The question a paper asks is rarely "what is interface 7"; it is "how much

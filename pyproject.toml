@@ -8,8 +8,15 @@ version = "0.5.0"
 description = "Local PISA interface analysis with an optional COCOMAPS 2.0 contact-map mode"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [{ name = "dzyla" }]
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Dawid Zyla", email = "dawid.zyla@cuanschutz.edu" }]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
 keywords = ["pisa", "protein", "interface", "structural-biology", "bioinformatics"]
 dependencies = [
     "numpy>=1.21",

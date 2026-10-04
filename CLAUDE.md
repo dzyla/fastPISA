@@ -55,6 +55,14 @@ ana.summary(), ana.write_json("out/")
 - `python examples/compare_vs_pisa.py` — head-to-head vs original PISA
   (add entries with `--fetch <pdbid>`; `--assembly-entries <ids>` compares
   recent entries via the PDBe PISA 2.0 JSON API; network only for fetching)
+- `python examples/benchmark_vs_pisa.py --n 2000` — the large BLIND
+  benchmark: a fresh-seed draw from the calibration sampling frame excluding
+  every in-sample entry, fetched from the EBI and compared interface by
+  interface. Resumable (`results.jsonl`, append-only, tolerates a torn final
+  line), overlapped fetching, `--report` summarises offline. Caches 1-2 GB to
+  `benchmark_cache/` (git-ignored) or `FASTPISA_BENCHMARK_CACHE`; reference
+  data location is `FASTPISA_REFERENCE_DIR`, which keeps a big run out of the
+  committed `tests/data/reference`.
 
 ## Validation status (2026-09-01; don't regress these)
 
@@ -440,6 +448,14 @@ accuracy tests used to skip entirely when freesasa was absent, which is how a
   (fetch/parse via `fastpisa/reference/`); optional CCP4-binary tests are
   enabled via FASTPISA_PISA_BIN / FASTPISA_EXTERNAL_MODELS_GLOB /
   FASTPISA_EXTERNAL_CIF (skip when unset).
+- **Prefer the EBI service over a local CCP4 binary for deposited entries.**
+  The service returns PISA's OWN published output -- the same engine against
+  the same frozen database our constants were fitted to -- so it is the
+  authoritative reference and needs no CCP4 install. A local CCP4 `pisa`
+  binary is worth having for exactly one thing the service cannot do:
+  structures absent from the frozen database, i.e. PREDICTED MODELS and
+  post-2018 entries. That is the open validation gap, not the reproduction
+  of deposited entries.
 - COCOMAPS 2.0: Chawla et al., Bioinformatics (2025), PMC12684709; standalone
   code Zenodo 10.5281/zenodo.17390665 (reference outputs cached in
   tests/data/reference/cocomaps2/). Its HBPLUS/NACCESS steps are

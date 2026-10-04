@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The crystal contact graph: placed molecules joined by interfaces.
 
 A node is a molecule of the asymmetric unit plus the crystallographic

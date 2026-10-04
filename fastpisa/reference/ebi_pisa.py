@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Fetch and parse original-PISA reference data from the EBI PISA service.
 
 The EBI PDBe PISA CGI (``https://www.ebi.ac.uk/pdbe/pisa/cgi-bin/``) exposes
@@ -39,7 +41,24 @@ PDBE_PISA_JSON_URL = "https://www.ebi.ac.uk/pdbe/api/pisa/interfaces/{pdbid}/{as
 RCSB_ASSEMBLY_URL = "https://files.rcsb.org/download/{pdbid}-assembly{assembly}.cif.gz"
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-REFERENCE_DIR = os.path.join(_REPO_ROOT, "tests", "data", "reference")
+_DEFAULT_REFERENCE_DIR = os.path.join(_REPO_ROOT, "tests", "data", "reference")
+
+#: Environment variable overriding where fetched reference data is cached.
+REFERENCE_DIR_ENV_VAR = "FASTPISA_REFERENCE_DIR"
+
+
+def reference_dir() -> str:
+    """Where fetched PISA/PDB reference data is cached.
+
+    Defaults to the committed 37-entry set under ``tests/data/reference``.
+    A large benchmark run caches 1-2 GB, which must not land in the
+    repository, so ``FASTPISA_REFERENCE_DIR`` redirects it without anyone
+    hardcoding a machine-specific path.
+    """
+    return os.environ.get(REFERENCE_DIR_ENV_VAR) or _DEFAULT_REFERENCE_DIR
+
+
+REFERENCE_DIR = reference_dir()
 
 
 def _f(el, tag, default=None):

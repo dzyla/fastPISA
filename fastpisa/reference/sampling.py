@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Reproducible, non-redundant sampling of PDB entries for calibration.
 
 The original 36-entry benchmark was hand-picked (protease-inhibitor,

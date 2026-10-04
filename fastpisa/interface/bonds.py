@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """PISA-grade inter-molecular bond detection (single source of truth).
 
 Original PISA's per-interface bond lists follow McDonald-Thornton-style

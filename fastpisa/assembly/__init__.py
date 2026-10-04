@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Assembly-level analysis.
 
 fastPISA analyses the coordinates it is GIVEN by default -- an asymmetric

@@ -16,7 +16,7 @@ keywords:
   - biological assembly
   - contact maps
   - COCOMAPS
-license: MIT
+license: AGPL-3.0-or-later
 repository-code: "https://github.com/dzyla/fastPISA"
 authors:
   - family-names: "Zyla"

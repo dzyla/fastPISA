@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """fastPISA: Local reproduction of PISA with COCOMAPS mode.
 
 Reads a PDB/mmCIF file and identifies biomolecular interfaces. All modes run

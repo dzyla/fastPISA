@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Assembly dissociation energy along the cheapest pathway (PISA semantics).
 
 PISA does not sum every interface to judge an assembly: it reports the free

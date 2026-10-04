@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Aromatic ring geometry for pi-interaction classification.
 
 COCOMAPS 2.0 validates pi interactions against ring centroids and normals

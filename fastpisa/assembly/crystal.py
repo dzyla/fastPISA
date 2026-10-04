@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Crystallographic symmetry-mate generation.
 
 For a deposited crystal entry, original PISA analyses the CRYSTAL, not the

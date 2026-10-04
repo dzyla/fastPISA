@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Atom-level audit of fastPISA's H-bonds / salt bridges against PISA's.
 
 The EBI PISA XML lists every hydrogen bond and salt bridge as an atom pair.

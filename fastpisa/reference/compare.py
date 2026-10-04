@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Compare fastPISA output against cached original-PISA reference data.
 
 Used by ``examples/compare_vs_pisa.py`` (human-readable report) and
@@ -228,7 +230,8 @@ def _relative_transform(rot_a, tran_a, rot_b, tran_b):
 
 
 def compare_crystal_entry(pdb_id: str, polymer_only: bool = True,
-                          allow_fetch: bool = True) -> Optional[dict]:
+                          allow_fetch: bool = True,
+                          cache_dir: Optional[str] = None) -> Optional[dict]:
     """Compare ``symmetry="crystal"`` output against PISA's full interface list.
 
     Matches each PISA interface to one fastPISA interface on the chain pair
@@ -242,27 +245,33 @@ def compare_crystal_entry(pdb_id: str, polymer_only: bool = True,
     (1ppf's glycans moved from chain E:401-417 to chains A/B:1-8, 1prc's HEM
     became HEC), so a ligand interface cannot be matched by name even when
     the geometry is identical.
+
+    ``cache_dir`` is where cached reference data is read and written;
+    ``None`` means :func:`fastpisa.reference.ebi_pisa.reference_dir`, which
+    honours ``FASTPISA_REFERENCE_DIR``. A large benchmark passes its own
+    directory so 1-2 GB of fetched data stays out of the repository.
     """
     from fastpisa.core import run_core
     from fastpisa.reference.ebi_pisa import (
         cached_pdb_path, fetch_pdb_file, fetch_pisa_xml, load_cached_reference,
-        parse_pisa_xml,
+        parse_pisa_xml, reference_dir,
     )
 
-    reference = load_cached_reference(pdb_id)
+    cache = cache_dir or reference_dir()
+    reference = load_cached_reference(pdb_id, cache_dir=cache)
     if reference is None:
         if not allow_fetch:
             return None
         try:
-            reference = parse_pisa_xml(fetch_pisa_xml(pdb_id))
+            reference = parse_pisa_xml(fetch_pisa_xml(pdb_id, cache_dir=cache))
         except Exception:
             return None
-    path = cached_pdb_path(pdb_id)
+    path = cached_pdb_path(pdb_id, cache_dir=cache)
     if path is None:
         if not allow_fetch:
             return None
         try:
-            path = fetch_pdb_file(pdb_id)
+            path = fetch_pdb_file(pdb_id, cache_dir=cache)
         except Exception:
             return None
 

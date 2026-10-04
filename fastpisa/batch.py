@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Batch analysis of many structures (item 4.1 of fastpisa_improvements.md).
 
 Provides a first-class entry point for analysing whole directories / lists of

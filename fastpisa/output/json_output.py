@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Build the two PDBe-PISA-shaped JSON documents.
 
 Both builders return a dict with a single top-level "assembly" key, matching the PDBe

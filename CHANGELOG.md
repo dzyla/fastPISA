@@ -81,6 +81,13 @@ a change that moves computed numbers is called out explicitly under
   Publishing, gated on tag/package/changelog version agreement, so
   `pip install fastpisa` works and the tag can be minted as a Zenodo DOI.
 - CI now also runs on **macOS and Windows**, not ubuntu only.
+- `examples/benchmark_vs_pisa.py` — a large blind benchmark against original
+  PISA over a fresh-seed draw from the calibration sampling frame, excluding
+  every entry that informed a fitted constant. Resumable, offline
+  `--report`, caches outside the repository via `FASTPISA_BENCHMARK_CACHE`.
+- `FASTPISA_REFERENCE_DIR` and a `cache_dir` argument on
+  `compare_crystal_entry`, so a multi-GB benchmark cache stays out of
+  `tests/data/reference`.
 
 ### Changed
 
@@ -104,8 +111,15 @@ a change that moves computed numbers is called out explicitly under
 - Molecule-pair screening is a single pass over the atoms instead of a
   per-pair rebuild: 31.5 s → 2.4 s on 1brs with ordered water (519
   molecules), where it was 82% of the runtime.
-- A **LICENSE** file (MIT) is present. Earlier releases declared MIT in
-  metadata while granting nothing, leaving the code all-rights-reserved.
+- A **LICENSE** file is present: **AGPL-3.0-or-later** with an attribution
+  term under section 7(b). Earlier releases declared MIT in metadata while
+  granting nothing, leaving the code all-rights-reserved. The AGPL choice is
+  deliberate — a modified version stays open, section 13 means hosting it as
+  a service also triggers source disclosure, and the 7(b) term keeps the
+  citation notice attached. Nothing had been released or pushed under the
+  earlier MIT declaration.
+- `pyproject.toml` names a citable author and carries OSI classifiers; it
+  previously credited the username `dzyla`.
 - `CITATION.cff` had a broken author record and claimed version 0.2.0.
 
 ### Changed

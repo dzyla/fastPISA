@@ -650,7 +650,36 @@ fastpisa/
   classes; H-bonds share fastPISA's geometric detector, but it does not run
   HBPLUS or add hydrogens.
 
-## License
+## Licence and citation
 
-Original PISA is (C) Eugene Krissinel (CCP4) — see the CCP4 license. This
-reimplementation is provided for research use.
+**AGPL-3.0-or-later**, with an attribution term under section 7(b). In plain
+terms:
+
+- Use it, run it, study it and share it freely — including inside a company
+  and including commercially.
+- Distribute it or a modified version, and it must go out under this same
+  licence with source available.
+- **Run a modified version as a network service and section 13 applies:** you
+  must offer that service's users the source of your modification. Hosting
+  fastPISA as a closed service is not permitted. That clause is the reason
+  for AGPL over plain GPL.
+- Charging money is not restricted, and could not be without making this
+  non-free software. Keeping a distributed or hosted modification *closed* is
+  what is restricted.
+- It cannot be combined into proprietary software, or into a project whose
+  licence will not carry these terms. If you need that, ask.
+
+Dependencies are compatible: numpy/scipy BSD, freesasa MIT, gemmi MPL-2.0.
+
+**If you publish results from fastPISA, please cite it** — `CITATION.cff` has
+the machine-readable record, and every release carries its own version and
+DOI. Cite the version you ran: the numbers have changed between versions, and
+`CHANGELOG.md` says how. `analysis_provenance()` reports the version, surface
+backend and options of a given run, which is what belongs in a methods
+section.
+
+Original PISA is © Eugene Krissinel (CCP4) and is a separate work under the
+CCP4 licence; fastPISA is an independent reimplementation containing no CCP4
+code. Please cite the PISA paper (Krissinel & Henrick, *J. Mol. Biol.*
+**372**:774–797, 2007) alongside this software, and COCOMAPS 2.0 (Chawla
+*et al.*, *Bioinformatics*, 2025) if you use the contact-map mode.

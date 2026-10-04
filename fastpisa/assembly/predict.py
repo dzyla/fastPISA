@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Enumerating, scoring and ranking the assemblies a crystal can form.
 
 A chosen set of interfaces either closes into a finite assembly or tiles the

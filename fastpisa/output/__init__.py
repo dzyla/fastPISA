@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """JSON serialisation of fastPISA results in the PDBe PISA schema.
 
 This package was previously absent from the repository: .gitignore's `output/` rule,

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Dawid Zyla. Part of fastPISA.
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Shared analysis core for all fastPISA modes.
 
 Every mode (``pisa``, ``cocomaps``, ``combined``) runs the exact same physics
