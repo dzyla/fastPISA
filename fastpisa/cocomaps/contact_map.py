@@ -47,8 +47,6 @@ class ResidueContact:
 
 def build_residue_contact_map(
     atoms,
-    mol1_mask,
-    mol2_mask,
     mol1_atom_indices,
     mol2_atom_indices,
     interface_cutoff: float = 5.0,

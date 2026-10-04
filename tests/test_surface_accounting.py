@@ -104,20 +104,29 @@ def test_group_residue_keeps_whole_isolated_asa_across_pairs():
 
 
 def test_surface_backend_info_reports_the_runtime_algorithm(monkeypatch):
+    """Provenance must name the algorithm and quadrature that actually ran.
+
+    It used to report FreeSASA's *default* algorithm rather than the pinned
+    one, and claimed "Shrake-Rupley" for a backend running Lee-Richards.
+    """
     import fastpisa.surface.freesasa_backend as backend
 
+    # The engine is pinned per half of this test: provenance now follows
+    # FASTPISA_SASA_BACKEND, so inheriting the ambient value would make the
+    # assertions depend on how the suite was invoked.
+    monkeypatch.setenv("FASTPISA_SASA_BACKEND", "auto")
     monkeypatch.setattr(backend, "_HAVE_FREESASA", False)
-    assert backend.surface_backend_info() == {
+    assert backend.surface_backend_info(point_density=480) == {
         "backend": "python",
         "algorithm": "Shrake-Rupley",
+        "quadrature": "480 sphere points",
         "version": None,
     }
 
-    try:
-        import freesasa
-    except ImportError:
-        return
+    pytest.importorskip("freesasa")
     monkeypatch.setattr(backend, "_HAVE_FREESASA", True)
+    monkeypatch.setenv("FASTPISA_SASA_BACKEND", "freesasa")
     info = backend.surface_backend_info()
     assert info["backend"] == "FreeSASA"
-    assert info["algorithm"] == freesasa.Parameters().algorithm()
+    assert info["algorithm"] == backend.FREESASA_ALGORITHM == "LeeRichards"
+    assert info["quadrature"] == f"{backend.LEE_RICHARDS_SLICES} slices"

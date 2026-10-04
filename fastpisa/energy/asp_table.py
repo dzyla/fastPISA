@@ -449,7 +449,7 @@ def is_apolar_class(cls: str) -> bool:
     favourable burial of these atoms inside the solvation gain. Splitting the
     sum by this predicate exposes it without adding any model.
     """
-    return cls.startswith(("C", "S", "NA_C")) and cls != "X"
+    return cls.startswith(("C", "S", "NA_C"))
 
 
 def sigma_of_fine(fine: str, sigma=None, delta=None) -> float:

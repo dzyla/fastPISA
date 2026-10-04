@@ -120,13 +120,35 @@ def _parse_bonds(iface_el, tag: str) -> List[dict]:
     return bonds
 
 
+def _parse_transform(mol_el):
+    """(3x3 rotation, 3-translation) in ORTHOGONAL coordinates, and the cell.
+
+    PISA reports the operation that places this molecule as both a
+    fractional triplet (``symop``) and an explicit orthogonal-space matrix.
+    The matrix is what a generated symmetry mate can be matched against
+    without re-deriving anyone's cell conventions, so it is parsed here as
+    row-major ``r<row><col>``.
+    """
+    rotation = [
+        [_f(mol_el, f"r{row}{col}", 0.0) or 0.0 for col in "xyz"]
+        for row in "xyz"
+    ]
+    translation = [_f(mol_el, t, 0.0) or 0.0 for t in ("tx", "ty", "tz")]
+    cell = tuple(int(_f(mol_el, f"cell_{k}", 0) or 0) for k in "ijk")
+    return rotation, translation, cell
+
+
 def _parse_molecule(mol_el, include_residues: bool) -> dict:
+    rotation, translation, cell = _parse_transform(mol_el)
     mol = {
         "id": _s(mol_el, "id"),
         "chain_id": _s(mol_el, "chain_id"),
         "class": _s(mol_el, "class"),
         "symop": _s(mol_el, "symop"),
         "symop_no": _s(mol_el, "symop_no"),
+        "rotation": rotation,
+        "translation": translation,
+        "cell": cell,
         "int_natoms": int(_f(mol_el, "int_natoms", 0) or 0),
         "int_nres": int(_f(mol_el, "int_nres", 0) or 0),
         "int_area": _f(mol_el, "int_area"),

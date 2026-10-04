@@ -35,6 +35,18 @@ ana.summary(), ana.write_json("out/")
   (`tests/test_vs_cocomaps2.py`), both from cached reference data
 - `python examples/calibrate.py` — audit/refit the fitted constants (offline,
   seconds); `--emit-sigma` prints a paste-ready SIGMA block
+- `python -m fastpisa.cli in.pdb --symmetry crystal -o out/` — crystal mode:
+  packing interfaces with symmetry mates (needs a cell + space group)
+- `python examples/validate_crystal.py` — crystal mode vs PISA on the 37
+  cached entries, interface by interface, offline (~2 min);
+  `--blind` runs the recorded 60-entry blind draw (network on first run),
+  `--all-interfaces` includes the ligand interfaces that PDB remediation
+  makes unmatchable by name
+- `python examples/calibrate_entropy.py` — audit/refit the single
+  dissociation-entropy constant against PISA's own assembly entropies
+  (offline, seconds); `--emit` prints a paste-ready assignment
+- `FASTPISA_SASA_BACKEND=python pytest tests/test_vs_pdbe_pisa.py -q` — the
+  same accuracy benchmark on the pure-Python surface engine
 - `python examples/make_figures.py` — regenerate the README comparison
   figures (docs/figures/) from the committed tables
 - `python examples/compare_vs_pisa.py` — head-to-head vs original PISA
@@ -93,6 +105,93 @@ a missing pair is explained, not hidden. Headless test: `streamlit.testing.v1.Ap
 cannot be driven by AppTest). Mol* was verified in headless Chromium via
 Playwright with `--use-angle=swiftshader` (WebGL needs it).
 
+## Crystal symmetry mode (`symmetry="crystal"`)
+
+`run_core(..., symmetry="crystal")` / `--symmetry crystal` expands the
+asymmetric unit by its space group and reports the crystal's interfaces --
+the packing contacts original PISA reports for a deposited entry, which are
+**60% of its output** (322 of 802 cached reference interfaces are
+identity-identity). Validated against PISA:
+
+- **all 37 cached entries: 566/566 polymer-polymer interfaces matched**,
+  area median error 1.20%, dG Pearson 0.995, median |err| 0.14 kcal/mol
+- **blind draw of 60 random entries** from the sampling frame (seed
+  20261004, disjoint from the 400 calibration + 36 legacy entries):
+  **732/732 matched**, area median 1.16%, dG Pearson 0.991, 0 failures,
+  median 3.4 s/entry (max 8 s on 114k atoms)
+
+Non-obvious things it depends on; all of them were bugs first:
+
+- **`CRYST1` is fixed-width 9/9/9/7/7/7 then 56-66 for the symbol.** It was
+  read as 5-char fields, which turned 1acb's cell into a=55.0 b=0.3 c=59.0
+  alpha=400 with a space group of "0.00  99.10  90.00 P 1 21 1". Nothing
+  consumed it, so nothing looked wrong.
+- **The mate screen uses the SHADOW cutoff (~6.6 A), not 5 A.** 1acb's
+  interface 9 is a real 14.2 A^2 interface whose closest atom pair is
+  5.02 A apart.
+- **The cell window is centred per operator, not on the origin**
+  (`operator_cell_offset`). Deposited coordinates are not centred on the
+  cell: in P 1 21 1 a molecule five cells out maps to minus five, so the
+  contacting image needs a ten-cell shift. A window around the origin missed
+  4 interfaces across the blind draw (1cq1, 1wuf, 4o45).
+- **Symmetry equivalence is EXACT integer arithmetic on the fractional
+  placement** (`_equivalence_key`), cell shift included. Two traps: rounding
+  orthogonal translations to decimals puts a 6-fold screw's c/6 = 42.55 A on
+  the boundary; and **a fractional rotation is NOT orthogonal**, so its
+  inverse is not its transpose -- using the transpose made every trigonal /
+  hexagonal interface appear twice (4ins: 48 reported vs PISA's 29). The
+  inverse comes from the adjugate.
+- **Only ASU-vs-mate pairs are evaluated.** Every mate-mate contact is
+  symmetry-equivalent to an ASU-mate one, so this is complete and is what
+  keeps the cost down (only 10-12 copies of ~50-216 candidates touch).
+- Molecules carry `asu_molecule_id` (`"A"`, or `"[NAG]A:2"`), `symop`,
+  `symop_no`, `cell`, `rotation`/`translation` (orthogonal, PISA's
+  convention) and the exact `frac_*` placement. Keying equivalence on the
+  CHAIN rather than the molecule merged every hetero group of a chain --
+  1ppf's two eight-sugar glycans collapsed to one interface, in `none` mode
+  too.
+
+## Polymer membership comes from the file, not a hardcoded list
+
+A residue is polymer if it is in `AMINO_ACIDS`/`NUCLEIC_ACIDS` **or** the
+file declares it (`SEQRES`; `_pdbx_poly_seq_scheme` / `_entity_poly_seq` in
+mmCIF), exposed as `PDBStructure.polymer_residues` and threaded into
+`get_molecules` and `get_molecule_masks`. A hand-maintained list cannot keep
+up: **7 of 60 blind entries (12%)** declare a SEQRES residue absent from
+ours (ACE AGM DAH DHA DLE DVA ETA FVA GL3 MGN MHS TRX TYS 6OG). 2izq is a
+D-peptide built from DLE/DVA -- splitting those off as ligands turned its
+201 PISA interfaces into 715. PISA treats declared residues as polymer.
+
+## Known limit: partial-occupancy alternate conformations
+
+Interface AREAS are unreliable when a large fraction of atoms carry
+occupancy < 1. Blind draw: the 2 entries with >10% partial-occupancy heavy
+atoms have a median area error of **33%**; the other 58 have **0.91%**.
+2izq (60% partial-occupancy, 11 of 16 residues with 3-4 conformers at
+occupancies 0.06-1.0) is 61% high; 2qqz (9.6%) is 21% high. Investigated and
+NOT explained by: polymer classification (counts now match exactly, 43/43),
+explicit hydrogens (including them gives 1296 vs our 1248 vs PISA's 774),
+or interface detection (our interface-atom counts match PISA's 123/114 vs
+117/114). Occupancy-weighting the buried area moves 1266 -> 989 and
+occupancy-squared -> 830, but neither is principled and neither reaches 774,
+so no rule was invented. Treat areas from such entries as indicative.
+
+## Removed on purpose
+
+- `fastpisa/assembly/symmetry.py` — never imported or tested, and its
+  docstring advertised space-group operator generation and assembly
+  prediction, inviting the assumption that crystal-packing interfaces were
+  covered. They are not. `fastpisa/assembly/__init__.py` says so.
+- `contacts._element_from_name`, `shrake_rupley.calculate_asa_batched`,
+  `cocomaps.interactions.HBOND_ATOMS_AA` / `_hbond` / `_atoms_roles`, and
+  `freesasa_backend.calculate_asa` (a second dispatcher that shadowed the
+  `FASTPISA_SASA_BACKEND` switch).
+- The uncalibrated legacy models (`scoring.calculate_p_value`,
+  `calculate_css`, `classify_interface`, `energy.calculate_entropy`,
+  `calculate_dissociation_energy`, `calculate_stabilization_energy`) are
+  still importable but now emit `DeprecationWarning`; a full analysis must
+  raise none (`tests/test_legacy_api.py`).
+
 ## Architecture in one line
 
 ALL modes (`combined`/`pisa`/`cocomaps`) run `fastpisa/core.py` exactly once —
@@ -121,6 +220,61 @@ are thin wrappers.
   Regenerate both with `examples/extract_calibration_features.py`
   (`--residues` for the local 10 MB audit table) after any change to atom
   typing, the surface code, or interface detection.
+- **Two surface engines, one algorithm each, proven equivalent.** The
+  pure-Python Shrake-Rupley in `surface/shrake_rupley.py` is the REFERENCE
+  (it defines `point_density`); `surface/freesasa_backend.py` is an
+  accelerator pinned to **Lee-Richards, 20 slices, set explicitly**. Pin
+  either with `FASTPISA_SASA_BACKEND=python|freesasa|auto`. They agree to
+  0.01% of total ASA and the full PISA benchmark is statistically identical
+  on both (dG r 0.9684 vs 0.9681; freesasa is ~13x faster), so the fitted
+  sigmas need no per-backend calibration -- `docs/surface_backends.md` has
+  the table. Three traps, all previously live bugs:
+    - FreeSASA's library DEFAULT is Lee-Richards, so calling only
+      `setNPoints()` configures a parameter the active algorithm ignores:
+      `point_density` was a silent no-op while the docs claimed
+      Shrake-Rupley. Always set the algorithm explicitly.
+    - FreeSASA 2.2.1's Shrake-Rupley kernel SEGFAULTS on spatially sparse
+      inputs (two atoms 20 A apart, any point count) -- which per-molecule
+      and per-pair ASA calls produce constantly. Hence the Lee-Richards pin;
+      `tests/test_sasa_backends.py` crashes the suite if it is undone.
+    - the Python burial test must compare a point against `r_j + probe`, not
+      `r_j` (a test point is a probe CENTRE). Omitting the probe made ASA
+      ~6x too large, and the neighbour cutoff must reach
+      `2*r_max + 2*probe` or real occluders are dropped. Both are pinned to
+      CLOSED-FORM spherical-cap geometry, not to the other backend.
+- **Assembly `dissociation_energy` / `entropy` are PISA's own quantities.**
+  `dG_diss = -sum(stab over the interfaces CUT) - T*dS`, recovered exactly
+  (+-0.01 kcal/mol) from the PDBe PISA 2.0 assembly JSON. The cut is the
+  cheapest dissociation pathway found by a memoised recursive minimum-cut
+  (`energy/dissociation.py`); the entropy is the rigid-body TRANSLATIONAL
+  term with ONE fitted constant (`energy/entropy.py`). Note: `T*dS` is
+  SUBTRACTED, the sum runs over the cut and not over every interface, and
+  the rotational term is deliberately absent (it would overshoot PISA 2x).
+  vs PISA, n=20 assemblies: entropy median |err| 0.90 (r 0.90), dG_diss
+  median |err| 1.9, Spearman 0.98. The pathway is computed over
+  MACROMOLECULAR components -- each ligand is folded into the chain it
+  buries most area against -- or "dissociation" would mean losing a
+  cofactor. `energy.calculate_entropy` is the old area surrogate: deprecated,
+  median error 468 kcal/mol, do not resurrect it.
+- **Candidate molecule pairs come from ONE pass over the atoms**
+  (`contacts.cross_molecule_neighbors`), keyed by an atom->molecule array.
+  The old per-pair `find_interface_atoms` rebuilt index lists, coordinate
+  arrays and two KD-trees for each of the O(N^2) pairs: 82% of runtime on
+  1brs with water (519 molecules), 31.5 s -> 2.4 s. Never go back to
+  scanning per pair.
+- **`find_contacts` is GEOMETRY ONLY**; `interface/bonds.py` is the single
+  bond classifier, and `bonds.hb_roles` the single donor/acceptor table.
+  `find_contacts` used to label every pair with a second, looser table whose
+  verdict `run_core` then overwrote, and `cocomaps/interactions.py` carried
+  a third (`HBOND_ATOMS_AA`, now deleted) that disagreed about proline N and
+  the ribose 2'-OH. `contacts.is_hydrogen_bond` is the chemistry-only
+  screen, NOT the counted H-bond.
+- **Alternate conformers are chosen per RESIDUE, as a consistent set.**
+  Highest total occupancy wins the residue, blank-altloc atoms are always
+  kept, and the winner fixes the residue name. Keying selection on the
+  residue name let microheterogeneity (altloc A = SER, B = ALA) survive as
+  TWO residues with atoms at identical coordinates; picking per atom name
+  could mix CA from one conformer with CB from another.
 - **Surface radii are the NACCESS/Chothia set** (`surface_radius()` in
   `surface/shrake_rupley.py`: sp3 C 1.87, sp2/aromatic C 1.76, N 1.65,
   O 1.40, S 1.85) -- recovered empirically as what PISA uses -- plus
@@ -190,8 +344,15 @@ are thin wrappers.
 
 ```bash
 pytest tests/ -q                          # must stay green (esp. test_vs_pdbe_pisa)
+FASTPISA_SASA_BACKEND=python pytest tests/ -q   # ...on the other surface engine too
 python examples/compare_vs_pisa.py        # accuracy table vs original PISA
+python examples/calibrate.py              # sigmas still refit to what is shipped
+python examples/calibrate_entropy.py      # entropy constant ditto
 ```
+
+A green run with `freesasa` installed does NOT cover the Python engine: the
+accuracy tests used to skip entirely when freesasa was absent, which is how a
+6x ASA error survived in the fallback. CI runs both legs.
 
 ## Linkage
 

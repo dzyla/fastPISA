@@ -12,16 +12,51 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
-        sasa-backend: ["freesasa", "pure-python"]
+        # Both ASA engines are exercised on the SAME tests. The old
+        # "pure-python" leg simply uninstalled freesasa, which made every
+        # accuracy test skip (they are guarded on freesasa being importable),
+        # so that leg stayed green for years while the Python engine computed
+        # ASA ~6x too large. Installing both and pinning the engine with
+        # FASTPISA_SASA_BACKEND runs the full offline benchmark on each.
+        sasa-backend: ["auto", "python"]
+    env:
+      FASTPISA_SASA_BACKEND: ${{ matrix.sasa-backend }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
+        # The `test` extra pulls freesasa, gemmi, pandas, matplotlib and
+        # openpyxl, so a green run means the tests RAN rather than skipped.
         run: |
           python -m pip install --upgrade pip
-          pip install -e . pytest gemmi
-          if [ "${{ matrix.sasa-backend }}" = "freesasa" ]; then pip install freesasa; fi
-      - name: Run tests (offline; includes accuracy regression vs cached EBI PISA reference)
+          pip install -e ".[test]"
+      - name: Report the active surface backend
+        run: |
+          python -c "from fastpisa.surface.shrake_rupley import active_backend; \
+                     from fastpisa.surface.freesasa_backend import surface_backend_info; \
+                     print(active_backend(), surface_backend_info())"
+      - name: Run tests (offline; includes the accuracy regressions vs cached
+              EBI PISA / PDBe PISA 2.0 / COCOMAPS 2.0 reference data)
         run: pytest tests/ -q
+
+  no-optional-deps:
+    # fastPISA advertises numpy + scipy as its only hard requirements. This
+    # job proves an install with nothing else still imports and analyses a
+    # structure, on the pure-Python surface engine.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e . pytest
+      - name: Core analysis works without freesasa, gemmi, pandas or matplotlib
+        run: |
+          python -c "import freesasa" && exit 1 || true
+          pytest tests/test_sasa_backends.py tests/test_pair_screening.py \
+                 tests/test_parser_models_altlocs.py tests/test_core_options.py -q
+          python -m fastpisa.cli tests/data/1ktz.pdb --pdb_id 1ktz --mode pisa -o /tmp/out

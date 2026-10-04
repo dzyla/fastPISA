@@ -199,3 +199,168 @@ def summarize(rows: List[dict]) -> Dict[str, float]:
             "poly_css_spearman": _spearman(pcss_fp, pcss_ref) if len(pcss_ref) > 2 else float("nan"),
         })
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Crystal mode: match PISA's FULL interface list, symmetry mates included
+# ---------------------------------------------------------------------------
+#: Tolerances for deciding that two crystal placements are the same contact.
+#: PISA prints its per-molecule matrix to a few decimals, so an exact or
+#: rounded key is wrong: a 6-fold screw translates by c/6 = 42.55 A, which
+#: PISA reports as 42.6 against our 42.55. Both bounds are far below the
+#: spacing between genuinely different placements (a cell edge, or a change
+#: of operator).
+TRANSFORM_ROTATION_TOL = 0.02
+TRANSFORM_TRANSLATION_TOL = 0.8     # Angstrom
+
+POLYMER_CLASSES = ("Protein", "NucleicAcid", "DNA", "RNA")
+
+
+def _relative_transform(rot_a, tran_a, rot_b, tran_b):
+    """Placement of molecule B as seen from molecule A's own frame."""
+    rot_a = np.asarray(rot_a, dtype=float)
+    rot_b = np.asarray(rot_b, dtype=float)
+    tran_a = np.asarray(tran_a, dtype=float)
+    tran_b = np.asarray(tran_b, dtype=float)
+    # Orthogonal space: a crystallographic rotation IS orthogonal here, so
+    # the transpose is the inverse (unlike in fractional coordinates).
+    return rot_a.T @ rot_b, rot_a.T @ (tran_b - tran_a)
+
+
+def compare_crystal_entry(pdb_id: str, polymer_only: bool = True,
+                          allow_fetch: bool = True) -> Optional[dict]:
+    """Compare ``symmetry="crystal"`` output against PISA's full interface list.
+
+    Matches each PISA interface to one fastPISA interface on the chain pair
+    and the relative crystal transform (either way round, since the two ends
+    of one contact give inverse transforms). Returns ``None`` when the
+    reference data is unavailable.
+
+    ``polymer_only`` restricts both sides to polymer-polymer interfaces. That
+    is the meaningful comparison for an older entry: PDB remediation has
+    renamed and renumbered hetero groups since PISA's database was frozen
+    (1ppf's glycans moved from chain E:401-417 to chains A/B:1-8, 1prc's HEM
+    became HEC), so a ligand interface cannot be matched by name even when
+    the geometry is identical.
+    """
+    from fastpisa.core import run_core
+    from fastpisa.reference.ebi_pisa import (
+        cached_pdb_path, fetch_pdb_file, fetch_pisa_xml, load_cached_reference,
+        parse_pisa_xml,
+    )
+
+    reference = load_cached_reference(pdb_id)
+    if reference is None:
+        if not allow_fetch:
+            return None
+        try:
+            reference = parse_pisa_xml(fetch_pisa_xml(pdb_id))
+        except Exception:
+            return None
+    path = cached_pdb_path(pdb_id)
+    if path is None:
+        if not allow_fetch:
+            return None
+        try:
+            path = fetch_pdb_file(pdb_id)
+        except Exception:
+            return None
+
+    wanted = []
+    for iface in reference:
+        mols = iface.get("molecules") or []
+        if len(mols) != 2:
+            continue
+        if polymer_only and not all(m.get("class") in POLYMER_CLASSES
+                                    for m in mols):
+            continue
+        if any("rotation" not in m for m in mols):
+            continue
+        rot, tran = _relative_transform(
+            mols[0]["rotation"], mols[0]["translation"],
+            mols[1]["rotation"], mols[1]["translation"])
+        wanted.append((frozenset(m["chain_id"] for m in mols), rot, tran, iface))
+
+    state = run_core(path, mode="pisa", symmetry="crystal")
+    produced = []
+    for iface in state.interfaces:
+        mols = iface.molecules
+        if polymer_only and not all(m.get("molecule_class") in POLYMER_CLASSES
+                                    for m in mols):
+            continue
+        rot, tran = _relative_transform(
+            mols[0]["rotation"], mols[0]["translation"],
+            mols[1]["rotation"], mols[1]["translation"])
+        produced.append((frozenset(m["asu_molecule_id"] for m in mols),
+                         rot, tran, iface))
+
+    used, rows, missing = set(), [], []
+    for chains, rot, tran, ref_iface in wanted:
+        best = None
+        for index, (chains2, rot2, tran2, ours) in enumerate(produced):
+            if index in used or chains2 != chains:
+                continue
+            for cand_rot, cand_tran in ((rot2, tran2),
+                                        (rot2.T, -rot2.T @ tran2)):
+                if (np.abs(cand_rot - rot).max() < TRANSFORM_ROTATION_TOL
+                        and np.abs(cand_tran - tran).max()
+                        < TRANSFORM_TRANSLATION_TOL):
+                    distance = float(np.abs(cand_tran - tran).max())
+                    if best is None or distance < best[0]:
+                        best = (distance, index, ours)
+                    break
+        if best is None:
+            missing.append({
+                "pair": "+".join(sorted(chains)),
+                "area_ref": ref_iface.get("int_area"),
+                "symop": [m.get("symop") for m in ref_iface["molecules"]],
+            })
+            continue
+        used.add(best[1])
+        ours = best[2]
+        rows.append({
+            "pdb_id": pdb_id,
+            "pair": "+".join(sorted(chains)),
+            "symop": [m.get("symop") for m in ref_iface["molecules"]],
+            "area_ref": ref_iface.get("int_area"),
+            "area_fp": ours.interface_area,
+            "dg_ref": ref_iface.get("int_solv_en"),
+            "dg_fp": ours.solvation_energy,
+        })
+
+    return {
+        "pdb_id": pdb_id,
+        "n_reference": len(wanted),
+        "n_matched": len(rows),
+        "n_reported": len(produced),
+        "rows": rows,
+        "missing": missing,
+    }
+
+
+def summarize_crystal(results: List[dict]) -> Dict[str, float]:
+    """Match rate and agreement over several :func:`compare_crystal_entry`."""
+    rows = [r for res in results for r in res["rows"]]
+    n_ref = sum(res["n_reference"] for res in results)
+    stats = {
+        "n_entries": len(results),
+        "n_reference": n_ref,
+        "matched": sum(res["n_matched"] for res in results),
+        "reported": sum(res["n_reported"] for res in results),
+    }
+    stats["match_rate"] = stats["matched"] / n_ref if n_ref else float("nan")
+    if not rows:
+        return stats
+    area_ref = np.array([r["area_ref"] for r in rows], dtype=float)
+    area_fp = np.array([r["area_fp"] for r in rows], dtype=float)
+    big = area_ref > 100
+    rel = np.abs(area_fp - area_ref) / np.maximum(area_ref, 1.0)
+    stats["area_median_rel_err"] = float(np.median(rel[big])) if big.any() \
+        else float(np.median(rel))
+    dg_ref = np.array([r["dg_ref"] for r in rows
+                       if r["dg_ref"] is not None], dtype=float)
+    dg_fp = np.array([r["dg_fp"] for r in rows
+                      if r["dg_ref"] is not None], dtype=float)
+    stats["dg_pearson"] = _pearson(dg_fp, dg_ref)
+    stats["dg_median_abs_err"] = float(np.median(np.abs(dg_fp - dg_ref)))
+    return stats

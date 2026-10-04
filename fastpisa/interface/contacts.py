@@ -121,6 +121,10 @@ class Interface:
     number_disulfide_bonds: int = 0
     number_salt_bridges: int = 0
     number_other_bonds: int = 0
+    #: How many times this interface occurs per asymmetric unit in the
+    #: crystal. Symmetry-equivalent copies are collapsed into one entry
+    #: (PISA's ``n_occ``); always 1 outside ``symmetry="crystal"``.
+    n_occurrences: int = 1
     contacts: List[AtomContact] = field(default_factory=list)
     molecules: List[dict] = field(default_factory=list)
     # COCOMAPS mode extension: contact map + interaction population
@@ -296,26 +300,29 @@ def is_hydrogen_bond(
     atom2_element: str,
     distance: float,
 ) -> bool:
-    """Check if a contact is a hydrogen bond (rule-based, no explicit H needed).
+    """CHEMISTRY-ONLY H-bond precondition: donor/acceptor pair within range.
 
-    Delegates to the same donor/acceptor chemistry used by COCOMAPS mode
-    (``fastpisa.cocomaps.interactions._hbond``). A contact is an H-bond when
-    one side provides a donor (N-H / O-H) and the other an acceptor (N/O),
-    within HBOND_DISTANCE (3.5 A). Because most modern structures (AlphaFold,
-    cryo-EM) contain no explicit hydrogen atoms, this must NOT require an atom
-    named ending in 'H'.
+    Delegates to :func:`fastpisa.interface.bonds.hb_roles` -- the one
+    calibrated donor/acceptor table in the package. A contact qualifies when
+    one side can donate and the other accept, within
+    :data:`HBOND_DISTANCE` (3.89 A, PISA's own cutoff). Explicit hydrogens
+    are not required: most modern models (AlphaFold, cryo-EM) have none.
+
+    This is NOT the H-bond fastPISA counts. The reported counts additionally
+    require the antecedent-angle geometry, metal-coordination exclusion and
+    donor/acceptor capacities applied by
+    :func:`fastpisa.interface.bonds.detect_bond_flags`, which is the single
+    classifier for every output. Use this only as a cheap screen or to ask
+    "could these two atoms hydrogen-bond at all?".
     """
-    from fastpisa.cocomaps.interactions import _hbond
+    from fastpisa.interface.bonds import hb_roles
+
     if distance >= HBOND_DISTANCE:
         return False
-    return _hbond(
-        atom1_resname.strip().upper(),
-        atom1_name.strip().upper(),
-        atom2_resname.strip().upper(),
-        atom2_name.strip().upper(),
-        atom1_element.upper().strip(),
-        atom2_element.upper().strip(),
-    )
+    roles1 = hb_roles(atom1_resname, atom1_name, atom1_element)
+    roles2 = hb_roles(atom2_resname, atom2_name, atom2_element)
+    return (("donor" in roles1 and "acceptor" in roles2)
+            or ("donor" in roles2 and "acceptor" in roles1))
 
 
 def is_salt_bridge(
@@ -367,27 +374,19 @@ def is_disulfide(
     )
 
 
-def _element_from_name(atom_name: str) -> str:
-    """Extract element symbol from atom name."""
-    name = atom_name.strip()
-    el = name[0:2].strip()
-    if len(el) == 2 and not el[1].isalpha():
-        el = el[0]
-    el = el.upper()
-    if not el or not el[0].isalpha():
-        el = name[0].upper() if name else "C"
-    return el
-
-
 def find_interface_atoms(
     atoms,
     mol1_mask: np.ndarray,
     mol2_mask: np.ndarray,
     cutoff: float = 5.0,
 ) -> Tuple[List[int], List[int]]:
-    """Find interface atoms on each side of an interface.
+    """Interface atoms on each side of ONE molecule pair.
 
-    Uses KD-tree for efficient spatial search.
+    Kept as a standalone utility for ad-hoc queries. Do NOT call it in a loop
+    over molecule pairs: it rebuilds both index lists, both coordinate arrays
+    and two KD-trees per call, which made interface detection O(N^2) in the
+    molecule count. :func:`cross_molecule_neighbors` answers the same question
+    for every pair in one pass and is what ``run_core`` uses.
     """
     idx1 = [i for i, m in enumerate(mol1_mask) if m]
     idx2 = [i for i, m in enumerate(mol2_mask) if m]
@@ -411,76 +410,115 @@ def find_interface_atoms(
     return interface_idx1, interface_idx2
 
 
+def cross_molecule_neighbors(
+    coords: np.ndarray,
+    mol_of_atom: np.ndarray,
+    kd_tree,
+    cutoff: float,
+) -> Dict[Tuple[int, int], Tuple[List[int], List[int]]]:
+    """For every molecule pair in contact, the near atoms on each side.
+
+    One pass over the atoms replaces the former per-pair scan. The old
+    :func:`find_interface_atoms` rebuilt a molecule's index list, its
+    coordinate array and two KD-trees for each of the O(N^2) molecule pairs,
+    which dominated the runtime on assemblies with many molecules even though
+    almost every pair was far apart.
+
+    Parameters
+    ----------
+    coords : (n_atoms, 3) array
+        Coordinates of every parsed atom.
+    mol_of_atom : (n_atoms,) int array
+        Molecule index per atom, or ``-1`` for atoms outside the interface
+        search (hydrogens carry no surface; water is excluded by default).
+    kd_tree : cKDTree
+        Tree over ``coords`` (the one ``run_core`` already builds).
+    cutoff : float
+        Inclusive distance cutoff.
+
+    Returns
+    -------
+    dict
+        ``{(mol_lo, mol_hi): (near_atoms_in_mol_lo, near_atoms_in_mol_hi)}``,
+        each list sorted and duplicate-free. Pairs with no contact are
+        absent, so iterating the result skips them for free.
+    """
+    pairs: Dict[Tuple[int, int], Tuple[set, set]] = {}
+    active = np.flatnonzero(mol_of_atom >= 0)
+    if active.size == 0:
+        return {}
+
+    neighborhoods = kd_tree.query_ball_point(coords[active], cutoff)
+    for i, neighbors in zip(active, neighborhoods):
+        mi = int(mol_of_atom[i])
+        for j in neighbors:
+            mj = int(mol_of_atom[j])
+            if mj < 0 or mj == mi:
+                continue
+            if mi < mj:
+                key, mine, theirs = (mi, mj), 0, 1
+            else:
+                key, mine, theirs = (mj, mi), 1, 0
+            sides = pairs.get(key)
+            if sides is None:
+                sides = pairs[key] = (set(), set())
+            sides[mine].add(int(i))
+            sides[theirs].add(int(j))
+
+    return {key: (sorted(lo), sorted(hi)) for key, (lo, hi) in pairs.items()}
+
+
 def find_contacts(
     atoms,
-    mol1_mask: np.ndarray,
-    mol2_mask: np.ndarray,
-    mol1_ids: list,
-    mol2_ids: list,
     interface_atoms1: list,
     interface_atoms2: list,
     contact_cutoff: float = 5.0,
 ) -> List[AtomContact]:
-    """Find all atom-atom contacts across an interface.
+    """Atom-atom contacts across an interface, within ``contact_cutoff``.
 
-    Uses KD-tree for efficient spatial search.
+    GEOMETRY ONLY. Every returned contact carries the default
+    ``bond_type="other"`` and an empty ``bond_types``: bond classification is
+    the sole responsibility of
+    :func:`fastpisa.interface.bonds.detect_bond_flags`, which is the only
+    code allowed to decide what an H-bond, salt bridge or disulfide is.
+
+    This function used to classify each pair with a second, looser chemistry
+    table whose verdict ``run_core`` then overwrote -- wasted work and a
+    dormant source of divergence (see
+    ``tests/test_bond_chemistry_single_source.py``).
+
+    ``contact_cutoff`` is honoured exactly: it previously kept its own 5.0 A
+    default while the caller's ``interface_cutoff`` reached only the
+    interface-atom selection, so the option was half-applied.
     """
-    contacts = []
-
-    coords1 = np.array([[atoms[i].x, atoms[i].y, atoms[i].z] for i in interface_atoms1])
-    coords2 = np.array([[atoms[i].x, atoms[i].y, atoms[i].z] for i in interface_atoms2])
-
-    if len(coords1) == 0 or len(coords2) == 0:
+    contacts: List[AtomContact] = []
+    if not interface_atoms1 or not interface_atoms2:
         return contacts
 
-    # Build KD-tree for coords2
+    coords1 = np.array([[atoms[i].x, atoms[i].y, atoms[i].z]
+                        for i in interface_atoms1])
+    coords2 = np.array([[atoms[i].x, atoms[i].y, atoms[i].z]
+                        for i in interface_atoms2])
+
     tree = cKDTree(coords2)
-
-    # For each atom in mol1 interface, find neighbors in mol2 interface
-    dist_pairs = tree.query_ball_point(coords1, contact_cutoff)
-
+    cutoff_sq = contact_cutoff ** 2
     for i1, idx1 in enumerate(interface_atoms1):
-        for j2 in dist_pairs[i1]:
-            idx2 = interface_atoms2[j2]
-            d2 = np.sum((coords1[i1] - coords2[j2]) ** 2)
-            if d2 >= contact_cutoff ** 2:
+        for j2 in tree.query_ball_point(coords1[i1], contact_cutoff):
+            d2 = float(np.sum((coords1[i1] - coords2[j2]) ** 2))
+            if d2 >= cutoff_sq:
                 continue
-            d = d2 ** 0.5
-
-            a1 = atoms[idx1]
-            a2 = atoms[idx2]
-
-            # Classify contact using the SHARED chemistry (identical disulfide /
-            # salt-bridge / H-bond rules as COCOMAPS mode, single source of
-            # truth). There is deliberately NO blanket "covalent" class here:
-            # genuine inter-molecular covalent bonds are essentially only
-            # Cys-Cys disulfides, and a generic ``d < 2.2 A`` rule mislabels
-            # crystallographic self-copies (identical atoms ~1.5 A apart) as
-            # covalent, which also suppressed their H-bond/salt classification
-            # so that PISA counts diverged from COCOMAPS.
-            if is_disulfide(a1.res_name, a2.res_name, a1.element, a2.element, d):
-                btype = "disulfide"
-            elif is_salt_bridge(a1.res_name, a1.atom_name, a2.res_name, a2.atom_name, d):
-                btype = "salt_bridge"
-            elif is_hydrogen_bond(
-                a1.res_name, a1.atom_name, a1.element,
-                a2.res_name, a2.atom_name, a2.element, d,
-            ):
-                btype = "hbond"
-            else:
-                btype = "other"
-
+            idx2 = interface_atoms2[j2]
+            a1, a2 = atoms[idx1], atoms[idx2]
             contacts.append(AtomContact(
                 atom1_idx=idx1,
                 atom2_idx=idx2,
-                distance=d,
+                distance=d2 ** 0.5,
                 atom1_name=a1.atom_name,
                 atom2_name=a2.atom_name,
                 atom1_residue=a1.res_name,
                 atom2_residue=a2.res_name,
                 atom1_chain=a1.auth_asym_id,
                 atom2_chain=a2.auth_asym_id,
-                bond_type=btype,
                 atom1_seq=a1.res_seq, atom2_seq=a2.res_seq,
                 atom1_icode=a1.icode or "", atom2_icode=a2.icode or "",
             ))
@@ -503,6 +541,30 @@ def filter_water_molecules(molecules, exclude_water=True):
     if not exclude_water:
         return molecules
     return [m for m in molecules if not is_water_molecule(m)]
+
+
+def _polymer_predicate(structure=None, polymer_residues=None):
+    """Return ``is_polymer(res_name)`` for one structure.
+
+    The hardcoded AMINO_ACIDS / NUCLEIC_ACIDS sets are the floor; a residue
+    the FILE declares as part of a polymer (``SEQRES`` /
+    ``_pdbx_poly_seq_scheme``) counts too. A list of modified residues can
+    never be complete -- 12% of a blind 60-entry draw declared a SEQRES
+    residue absent from ours (D-amino acids, sulfotyrosine, acetyl caps) --
+    and splitting those off as ligands fabricates interfaces and scatters a
+    chain's buried area across fragments. PISA treats them as polymer.
+    """
+    declared = polymer_residues
+    if declared is None:
+        declared = getattr(structure, "polymer_residues", None) or set()
+
+    def is_polymer(res_name: str) -> bool:
+        upper = res_name.upper()
+        if upper in AMINO_ACIDS or upper in NUCLEIC_ACIDS:
+            return True
+        return upper in declared and not is_water_ligand(upper)
+
+    return is_polymer
 
 
 def get_molecules(structure, merge_ligands: bool = False):
@@ -531,6 +593,7 @@ def get_molecules(structure, merge_ligands: bool = False):
     """
     molecules = []
     mol_id = 0
+    is_polymer = _polymer_predicate(structure)
 
     if merge_ligands:
         for chain in structure.chains:
@@ -539,11 +602,15 @@ def get_molecules(structure, merge_ligands: bool = False):
             if not atoms_nonwater:
                 continue
             res_names = set(a.res_name.upper() for a in atoms_nonwater)
-            if res_names & AMINO_ACIDS:
-                mol_class = "Protein"
-            elif res_names & NUCLEIC_ACIDS:
+            poly_names = {r for r in res_names if is_polymer(r)}
+            if poly_names & AMINO_ACIDS or (poly_names - NUCLEIC_ACIDS):
+                mol_class = "Protein" if (poly_names & AMINO_ACIDS
+                                          or poly_names - NUCLEIC_ACIDS) else "NucleicAcid"
+            elif poly_names & NUCLEIC_ACIDS:
                 mol_class = "NucleicAcid"
             else:
+                mol_class = "Ligand"
+            if not poly_names:
                 mol_class = "Ligand"
             molecules.append({
                 "molecule_id": mol_id,
@@ -565,9 +632,9 @@ def get_molecules(structure, merge_ligands: bool = False):
         ligand_groups = {}  # (res_name) -> {atom}
         for atom in chain.atoms:
             rn = atom.res_name.upper()
-            # Standard polymer residues are ATOM records of amino/nucleic acids
-            is_poly_res = (rn in AMINO_ACIDS) or (rn in NUCLEIC_ACIDS)
-            if is_poly_res:
+            # A polymer residue is a standard amino acid / nucleotide, or one
+            # the file declares in SEQRES / _pdbx_poly_seq_scheme.
+            if is_polymer(rn):
                 poly_atoms.append(atom)
             else:
                 ligand_groups.setdefault(rn, []).append(atom)
@@ -575,10 +642,10 @@ def get_molecules(structure, merge_ligands: bool = False):
         # Polymer molecule
         if poly_atoms:
             res_names = set(a.res_name.upper() for a in poly_atoms)
-            if res_names & AMINO_ACIDS:
-                mol_class = "Protein"
-            elif res_names & NUCLEIC_ACIDS:
+            if res_names & NUCLEIC_ACIDS and not (res_names - NUCLEIC_ACIDS):
                 mol_class = "NucleicAcid"
+            elif res_names & AMINO_ACIDS or res_names - NUCLEIC_ACIDS:
+                mol_class = "Protein"
             else:
                 mol_class = "Other"
             molecules.append({
@@ -616,7 +683,7 @@ def get_molecules(structure, merge_ligands: bool = False):
     return molecules
 
 
-def get_molecule_masks(atoms, molecules):
+def get_molecule_masks(atoms, molecules, polymer_residues=None):
     """Create boolean masks for each atom indicating which molecule it belongs to.
 
     Polymer masks include only the chain's standard polymer residues (not
@@ -631,10 +698,9 @@ def get_molecule_masks(atoms, molecules):
     seqs = np.array([a.auth_seq_id for a in atoms])
     icodes = np.array([(a.icode or "").strip() for a in atoms])
     comps = np.array([a.label_comp_id for a in atoms])
-    is_poly = np.array([
-        a.res_name.upper() in AMINO_ACIDS or a.res_name.upper() in NUCLEIC_ACIDS
-        for a in atoms
-    ]) if n else np.zeros(0, dtype=bool)
+    is_polymer = _polymer_predicate(polymer_residues=polymer_residues or set())
+    is_poly = np.array([is_polymer(a.res_name) for a in atoms]) \
+        if n else np.zeros(0, dtype=bool)
 
     masks = []
     not_water = None

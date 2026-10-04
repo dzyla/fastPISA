@@ -7,7 +7,7 @@ name = "fastpisa"
 version = "0.4.0"
 description = "Local PISA interface analysis with an optional COCOMAPS 2.0 contact-map mode"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "dzyla" }]
 keywords = ["pisa", "protein", "interface", "structural-biology", "bioinformatics"]
@@ -21,6 +21,18 @@ mmcif = ["gemmi"]
 fast = ["freesasa"]
 dataframe = ["pandas"]
 viz = ["matplotlib"]
+# Everything the offline test suite needs to run WITHOUT skipping: the
+# accuracy regressions need freesasa + gemmi, and the app-layer tests need
+# pandas / matplotlib / openpyxl. CI installs this extra so a green run means
+# the tests ran, not that they were skipped.
+test = [
+    "pytest",
+    "freesasa",
+    "gemmi",
+    "pandas",
+    "matplotlib",
+    "openpyxl",
+]
 
 [project.scripts]
 fastpisa = "fastpisa.cli:main"

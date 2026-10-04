@@ -78,6 +78,12 @@ def main():
         help="Interface atom cutoff distance (default: 5.0 A)",
     )
     parser.add_argument(
+        "--symmetry", choices=("none", "crystal"), default="none",
+        help="'crystal' expands the asymmetric unit by its space group and "
+             "reports packing interfaces with symmetry mates, as original "
+             "PISA does for a deposited entry (default: none)",
+    )
+    parser.add_argument(
         "--no-water", dest="exclude_water", action="store_true", default=True,
         help="Exclude ordered water from interface search (default: True)",
     )
@@ -193,6 +199,7 @@ def main():
         interface_cutoff=args.interface_cutoff,
         mode=args.mode,
         exclude_water=args.exclude_water,
+        symmetry=args.symmetry,
         min_css=args.min_css,
         ligand_mode=args.ligand_mode,
     )

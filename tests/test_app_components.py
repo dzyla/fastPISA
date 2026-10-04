@@ -40,7 +40,11 @@ def test_interpretation_flags(gi):
     levels = {f["level"] for f in flags}
     assert levels <= {"info", "note", "warning"}
     text = " ".join(f["text"] for f in flags)
-    assert "779" in text and "high-burial" in text.lower() and "Arg59" in text
+    # Derive the area from the digest rather than hardcoding it: the two
+    # surface backends differ by ~0.3% on an interface area (a difference of
+    # two large ASAs), so a literal "779" pinned the test to one engine.
+    assert f"{gi.interface_area:,.0f}" in text
+    assert "high-burial" in text.lower() and "Arg59" in text
     assert "stable biological interface" not in text.lower()
     from fastpisa.report import GroupInterface
     empty = GroupInterface("x", "y", ["A"], ["F"])
@@ -105,8 +109,8 @@ def test_molstar_html_escapes_user_labels(res):
 
 
 def test_excel_sheet_names_are_safe_and_unique():
-    import openpyxl
-    import pandas as pd
+    openpyxl = pytest.importorskip("openpyxl")
+    pd = pytest.importorskip("pandas")
     from app_helpers import excel_bytes
 
     frame = pd.DataFrame([{"value": 1}])
@@ -161,10 +165,8 @@ def test_sequence_alignment_maps_renumbered_chains(res, gi):
     assert c.overlap_table()["shared"].iloc[0] >= 20
 
 
-pdb_align = pytest.importorskip("pdb_align")
-
-
 def test_chain_detection_and_superposition():
+    pytest.importorskip("pdb_align")
     from alignment import detect_shared_chains, superpose
     m = detect_shared_chains(_BRS, _BRS, ["A"], ["B", "C", "D", "E", "F"])
     assert len(m) == 1 and m[0].ref_chain == "A" and m[0].mob_chain in ("B", "C") and m[0].identity > 95

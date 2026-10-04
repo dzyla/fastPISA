@@ -97,18 +97,53 @@ weak C–H bonds use explicit-H angles), pinned in
 cd fastPISA
 pip install -e .
 
-# Optional but recommended: C-accelerated ASA backend (~15x faster)
+# Optional but recommended: C-accelerated ASA backend (~13x faster end to end)
 pip install freesasa numpy scipy
 #   - numpy, scipy: always required
 #   - gemmi: required for mmCIF parsing
-#   - freesasa: C library; Shrake-Rupley SASA in C. Installed wheels use
+#   - freesasa: C library, Lee-Richards SASA in C. Installed wheels use
 #     gcc to compile the C library with Python bindings.
 ```
 
 Dependencies: `numpy`, `scipy` (core); `gemmi` (mmCIF); `freesasa` (fast ASA, optional).
 
-If `freesasa` is not installed, fastPISA automatically falls back to the pure-Python
-Shrake-Rupley implementation.
+**Crystal symmetry.** For a deposited crystal entry, original PISA analyses
+the whole crystal, so **60% of the interfaces it reports involve a symmetry
+mate** (322 of 802 across the cached reference set are interfaces of the
+deposited coordinates alone). `--symmetry crystal` reproduces them: it
+expands the asymmetric unit by its space group, keeps the copies that can
+bury surface against it, and reports one entry per distinct crystal contact
+with the operator that generates it.
+
+```bash
+python -m fastpisa.cli 1acb.pdb --pdb_id 1acb --symmetry crystal -o out/
+```
+
+Validated against PISA interface-by-interface, matched on chain pair *and*
+relative crystal transform:
+
+| | entries | PISA polymer–polymer interfaces found | area median err | ΔG Pearson |
+|---|---|---|---|---|
+| cached reference set | 37 | **566 / 566 (100%)** | 1.20% | 0.995 |
+| blind random draw | 60 | **732 / 732 (100%)** | 1.16% | 0.991 |
+
+The blind draw is a fresh seed over the stated sampling frame
+(`fastpisa/reference/sampling.py`), disjoint from the 400 calibration and 36
+legacy entries, so no entry in it informed any constant. Median 3.4 s per
+entry, 8 s worst case (114k atoms); 0 failures. Needs a usable cell and
+space group — without one the option is a no-op, which is what a predicted
+model wants.
+
+**Surface backends.** The reference engine is the pure-Python Shrake-Rupley
+implementation in `fastpisa/surface/shrake_rupley.py`; it defines the
+`--point_density` quadrature and the fitted solvation parameters are validated
+against it. When `freesasa` is installed it is used instead, pinned to
+Lee-Richards (FreeSASA's Shrake-Rupley kernel segfaults on sparse inputs). The
+two agree to **0.01% of total ASA** and the full PISA accuracy benchmark passes
+on either, so results are backend-independent; pin one with
+`FASTPISA_SASA_BACKEND=python|freesasa|auto` and see
+[docs/surface_backends.md](docs/surface_backends.md) for the measured
+comparison.
 
 ---
 
@@ -472,9 +507,13 @@ extends the benchmark with new entries (network required once).
 Speed (with the FreeSASA C backend): typical complexes take 0.2–1 s (table
 above); GroEL/GroES (1aon: 58k atoms, 21 chains, 70 interfaces) takes ~7 s in
 combined mode. fastPISA is ~3–4x faster than the original CCP4 binary on
-comparable inputs and ~15x faster than its own pure-Python fallback. Per-pair
-surfaces are computed only near each interface, so runtime scales with
-interface count and local size, not with (chains)² × structure size.
+comparable inputs and ~13x faster than its own pure-Python fallback. Per-pair
+surfaces are computed only near each interface, and candidate molecule pairs
+come from a single pass over the atoms rather than a scan per pair, so runtime
+scales with interface count and local size, not with (molecules)² × structure
+size. (That screening pass is what makes many-molecule inputs tractable: 1brs
+with ordered water included — 519 molecules, 134k candidate pairs — went from
+31.5 s to 2.4 s.)
 
 Note on interface *counts*: original PISA run on a crystal entry also reports
 symmetry-mate (crystal packing) interfaces; fastPISA reports the interfaces
@@ -504,7 +543,7 @@ fastpisa/
 │   ├── contacts.py        # molecule detection, masks, contacts (shared)
 │   └── bonds.py           # geometric H-bond / salt-bridge / disulfide detection
 ├── surface/
-│   ├── shrake_rupley.py   # pure-Python Shrake-Rupley ASA
+│   ├── shrake_rupley.py   # reference Shrake-Rupley ASA + backend switch
 │   └── freesasa_backend.py# optional C-accelerated ASA (auto-dispatched)
 ├── energy/                # PISA-calibrated ASP table, ΔGsolv, bond energies
 ├── scoring/               # PISA-definition P-value, calibrated CSS
@@ -518,18 +557,36 @@ fastpisa/
 ## Notes / caveats
 
 - **Calibration scope**: the ΔG/P-value/CSS calibration was fitted on the
-  21-entry EBI benchmark (leave-one-PDB-out validated). Single-ion interfaces
+  674-entry benchmark described under *Validation status* in `CLAUDE.md` and
+  asserted by `tests/test_calibration_benchmark.py` (grouped 10-fold CV, folds
+  never splitting a PDB entry). Single-ion interfaces
   (a lone Zn²⁺/Ca²⁺) carry the largest relative ΔG errors — PISA uses
   ion-specific desolvation terms that fastPISA approximates with one metal
   class. CSS is a calibrated surrogate: exact CSS requires PISA's crystal-wide
   assembly analysis.
-- **ASA/BSA convention**: with the FreeSASA backend, absolute ASA/BSA values use
-  FreeSASA's parameters; with the pure-Python backend they use our 480-point
-  convention. Values differ slightly between the two backends, but interface
-  *detection* is identical. Explicit hydrogens are excluded from all surfaces
-  (the PISA convention) but are used for H-bond geometry when present.
-- **Symmetry**: crystal-symmetry (packing-mate) interface enumeration and
-  biological-assembly prediction are not implemented (see benchmark note).
+- **ASA/BSA convention**: the two backends run different quadratures of the
+  same surface (Shrake-Rupley with `--point_density` points in Python;
+  Lee-Richards with 20 slices in FreeSASA) and agree to 0.01% of total ASA,
+  median 0.09 Å² per atom, max 1.6 Å² — see
+  [docs/surface_backends.md](docs/surface_backends.md). Interface *detection* is
+  identical. Explicit hydrogens are excluded from all surfaces (the PISA
+  convention) but are used for H-bond geometry when present.
+- **Assembly dissociation**: `dissociation_energy` and `entropy` follow PISA's
+  own relation, `ΔG_diss = −Σ(stabilization energy over the interfaces cut) −
+  TΔS`, along the cheapest dissociation pathway. `TΔS` is the rigid-body
+  translational entropy of the released bodies with one constant fitted to
+  PISA. Against PISA's own assembly values: entropy median |err| 0.90 kcal/mol
+  (r 0.90), dissociation energy median |err| 1.9 kcal/mol, Spearman 0.98
+  (n = 20). Validated by `tests/test_dissociation.py`.
+- **Symmetry**: `--symmetry crystal` enumerates crystal packing interfaces
+  with symmetry mates (see below). Biological-assembly *prediction* (searching
+  the crystal for the most stable assembly) is still not implemented; the
+  dissociation machinery it would need is in `fastpisa/energy/dissociation.py`.
+- **Partial occupancy**: interface areas are unreliable when many atoms carry
+  occupancy < 1. On a blind 60-entry draw, the 2 entries with >10%
+  partial-occupancy heavy atoms had a 33% median area error against PISA
+  versus 0.91% for the other 58. Investigated without resolution — see
+  *Known limit* in `CLAUDE.md`.
 - **COCOMAPS classifier** is a rule-based subset of COCOMAPS 2.0's 16 interaction
   classes; H-bonds share fastPISA's geometric detector, but it does not run
   HBPLUS or add hydrogens.

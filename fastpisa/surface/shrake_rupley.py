@@ -14,9 +14,46 @@ Key optimisations:
   4. Vectorised numpy operations throughout
 """
 
+import os
+
 import numpy as np
 from scipy.spatial import cKDTree
 from typing import Dict, List, Optional
+
+#: Name of the reference surface algorithm. The pure-Python implementation in
+#: this module IS that reference: it defines the ``point_density`` quadrature
+#: and is the engine the solvation parameters are calibrated against.
+PYTHON_ALGORITHM = "Shrake-Rupley"
+
+#: Environment variable pinning the ASA engine, for reproducibility and for
+#: backend comparisons: ``auto`` (default), ``python`` or ``freesasa``.
+BACKEND_ENV_VAR = "FASTPISA_SASA_BACKEND"
+_BACKENDS = ("auto", "python", "freesasa")
+
+
+def active_backend() -> str:
+    """Which ASA engine will run: ``"python"`` or ``"freesasa"``.
+
+    ``auto`` (the default) prefers FreeSASA when it is importable. Setting
+    ``FASTPISA_SASA_BACKEND=python`` forces the reference engine even when
+    FreeSASA is installed, which is what the backend comparison and the
+    calibration re-validation use. ``freesasa`` demands the C backend and
+    fails loudly rather than silently degrading to a different quadrature.
+    """
+    from fastpisa.surface.freesasa_backend import available
+
+    choice = os.environ.get(BACKEND_ENV_VAR, "auto").strip().lower()
+    if choice not in _BACKENDS:
+        raise ValueError(
+            f"{BACKEND_ENV_VAR}={choice!r} is not one of {_BACKENDS}")
+    if choice == "python":
+        return "python"
+    if choice == "freesasa":
+        if not available():
+            raise RuntimeError(
+                f"{BACKEND_ENV_VAR}=freesasa but freesasa is not installed")
+        return "freesasa"
+    return "freesasa" if available() else "python"
 
 
 # van der Waals radii (A) — PISA convention
@@ -135,14 +172,17 @@ def calculate_asa(
     """Calculate solvent-accessible surface area per atom.
 
     Dispatches to the C-accelerated FreeSASA backend when installed, otherwise
-    uses the pure-Python Shrake-Rupley implementation. Callers that need to
-    force the Python backend can call :func:`calculate_asa_python` directly.
+    uses the pure-Python Shrake-Rupley implementation. The choice can be
+    pinned with the ``FASTPISA_SASA_BACKEND`` environment variable
+    (``auto`` | ``python`` | ``freesasa``) -- see :func:`active_backend`.
+    Callers that want the reference engine unconditionally can call
+    :func:`calculate_asa_python` directly.
 
     See :func:`calculate_asa_python` for the Shrake-Rupley algorithm.
     """
-    from fastpisa.surface.freesasa_backend import available, calculate_asa_freesasa
+    from fastpisa.surface.freesasa_backend import calculate_asa_freesasa
 
-    if available():
+    if active_backend() == "freesasa":
         return calculate_asa_freesasa(
             atoms=atoms,
             probe_radius=probe_radius,
@@ -204,7 +244,10 @@ def calculate_asa_python(
     kd_tree : scipy.spatial.cKDTree, optional
         Pre-computed KD-tree of the combined structure.
     neighbor_cutoff : float, optional
-        Maximum distance for neighbor search. If None, uses max(combined_radii) * 2 + probe_radius.
+        Maximum distance for the neighbour search. This is a PERFORMANCE hint
+        only: a value smaller than the geometric requirement
+        ``2 * r_max + 2 * probe_radius`` would silently drop real occluders,
+        so it is clamped up to that bound. If None, that bound is used.
 
     Returns
     -------
@@ -231,9 +274,18 @@ def calculate_asa_python(
 
     accessible_area = np.zeros(n)
 
-    # Determine neighbor cutoff
-    if neighbor_cutoff is None:
-        neighbor_cutoff = 2.0 * radii.max() + probe_radius + 1.0
+    # Neighbour cutoff. Atom j can hide part of atom i's probe sphere only
+    # while the two probe spheres overlap, i.e. out to r_i + r_j + 2*probe.
+    # The largest radius present bounds that for every pair, so anything
+    # shorter (a caller's stale hint included) is clamped UP: a short cutoff
+    # drops real occluders and inflates ASA, which is a physics error, not a
+    # speed/accuracy trade.
+    r_max = float(radii.max())
+    if combined_radii is not None and len(combined_radii):
+        r_max = max(r_max, float(np.max(combined_radii)))
+    required_cutoff = 2.0 * r_max + 2.0 * probe_radius
+    if neighbor_cutoff is None or neighbor_cutoff < required_cutoff:
+        neighbor_cutoff = required_cutoff
 
     # Build KD-tree for neighbor lookup if not provided
     if kd_tree is None and combined_coords is not None:
@@ -272,15 +324,19 @@ def calculate_asa_python(
                 # Distance from each point to each neighbor
                 dist_sq = np.sum((pts[:, None, :] - neighbor_coords[None, :, :]) ** 2, axis=2)
 
-                # Buried if inside any neighbor's vdw sphere
-                buried = dist_sq < (neighbor_rads[None, :] ** 2)
+                # A test point is the CENTRE of a probe sphere, so it is
+                # inaccessible when it lies within (r_j + probe) of neighbour
+                # j -- not within r_j. Dropping the probe radius here leaves
+                # the probe-centre sphere occluded by bare van-der-Waals
+                # spheres only and overstates ASA ~6x on a real protein.
+                buried = dist_sq < ((neighbor_rads[None, :] + probe_radius) ** 2)
                 accessible = ~buried.any(axis=1)
                 frac = accessible.sum() / point_density
         else:
             # Fallback: O(n^2) against all atoms
             pts = coords[i] + total_r[i] * unit_pts
             dist_sq = np.sum((pts[:, None, :] - coords[None, :, :]) ** 2, axis=2)
-            buried = dist_sq < (radii[None, :] ** 2)
+            buried = dist_sq < ((radii[None, :] + probe_radius) ** 2)
             buried[:, i] = False  # exclude self (column i = the atom itself)
             accessible = ~buried.any(axis=1)
             frac = accessible.sum() / point_density
@@ -297,34 +353,6 @@ def calculate_asa_python(
             result[i] = accessible_area[i]
 
     return result
-
-
-def calculate_asa_batched(
-    atoms,
-    probe_radius: float = 1.4,
-    point_density: int = 480,
-    atom_radii: Optional[Dict] = None,
-    atom_indices: Optional[List[int]] = None,
-    combined_coords: Optional[np.ndarray] = None,
-    combined_radii: Optional[np.ndarray] = None,
-    kd_tree: Optional[object] = None,
-    neighbor_cutoff: Optional[float] = None,
-) -> Dict[int, float]:
-    """Calculate ASA in batches (compatibility wrapper).
-
-    This is the same as calculate_asa but keeps the old signature.
-    """
-    return calculate_asa(
-        atoms=atoms,
-        probe_radius=probe_radius,
-        point_density=point_density,
-        atom_radii=atom_radii,
-        atom_indices=atom_indices,
-        combined_coords=combined_coords,
-        combined_radii=combined_radii,
-        kd_tree=kd_tree,
-        neighbor_cutoff=neighbor_cutoff,
-    )
 
 
 def calculate_bsa(

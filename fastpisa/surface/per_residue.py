@@ -61,6 +61,7 @@ def compute_per_residue_surface(
     atom_bsa_buried: Dict[int, float],
     interface_atom_indices: set,
     mol_atoms: List[int],
+    atom_sigma=None,
 ) -> Dict:
     """Compute per-residue ASA and BSA for interface residues.
 
@@ -78,6 +79,10 @@ def compute_per_residue_surface(
     mol_atoms : list
         Heavy-atom indices belonging to this molecule. Once an interface
         residue is identified, all of its atoms contribute to isolated ASA.
+    atom_sigma : sequence of float, optional
+        Per-atom ASP sigma, indexed globally. ``run_core`` computes this once
+        for the whole structure, so passing it avoids re-deriving the atom
+        type of every interface atom on every interface.
 
     Returns
     -------
@@ -109,6 +114,13 @@ def compute_per_residue_surface(
         "buried_surface_areas": [],
     }
 
+    if atom_sigma is None:
+        from fastpisa.energy.asp_table import get_asp
+        sigma_of = lambda idx: get_asp(  # noqa: E731
+            atoms[idx].atom_name, atoms[idx].element, atoms[idx].res_name)
+    else:
+        sigma_of = lambda idx: atom_sigma[idx]  # noqa: E731
+
     for res_key, atom_indices in sorted(residues.items()):
         res_name = atoms[atom_indices[0]].label_comp_id
         res_seq = atoms[atom_indices[0]].res_seq
@@ -120,16 +132,13 @@ def compute_per_residue_surface(
         solv_list = []
 
         for idx in atom_indices:
-            atom = atoms[idx]
             asa = atom_asa_combined.get(idx, 0.0)
             bsa = max(atom_bsa_buried.get(idx, 0.0), 0.0)
             asa_list.append(round(asa, 2))
             bsa_list.append(round(bsa, 2))
 
             # Solvation energy for this atom
-            from fastpisa.energy.asp_table import get_asp
-            asp = get_asp(atom.atom_name, atom.element, atom.res_name)
-            solv_list.append(round(asp * bsa, 4))
+            solv_list.append(round(sigma_of(idx) * bsa, 4))
 
         result["residue_label_comp_ids"].append(res_name)
         result["residue_seq_ids"].append(str(res_seq))

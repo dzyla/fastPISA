@@ -64,6 +64,12 @@ class PISAInterfaceAnalyzer:
         ``"separate"`` (default; classic PISA -- each bound hetero group is
         its own monomer) or ``"merge"`` (a chain's bound ligands/cofactors
         belong to that chain's molecule, the jsPISA-on-assembly convention).
+    symmetry : str
+        ``"none"`` (default) or ``"crystal"``. ``"crystal"`` expands the
+        asymmetric unit by its space group and reports the crystal's
+        interfaces -- including the packing contacts original PISA reports
+        for a deposited entry, which are 60% of its output. Needs a usable
+        cell and space group; without one it is a no-op.
 
     Attributes
     ----------
@@ -88,6 +94,7 @@ class PISAInterfaceAnalyzer:
         exclude_water: bool = True,
         min_css: float = 0.0,
         ligand_mode: str = "separate",
+        symmetry: str = "none",
     ):
         self.path = Path(path)
         if not self.path.exists():
@@ -101,9 +108,19 @@ class PISAInterfaceAnalyzer:
         self.exclude_water = exclude_water
         self.min_css = min_css
         self.ligand_mode = ligand_mode
+        #: ``"none"`` (the given coordinates) or ``"crystal"`` (expand the
+        #: asymmetric unit by its space group and report the crystal's
+        #: interfaces, including packing contacts -- what original PISA does
+        #: for a deposited entry).
+        self.symmetry = symmetry
 
         # Populated by analyze()
         self.interfaces: List[Interface] = []
+        #: Cheapest dissociation pathway of the analysed coordinates
+        #: (:class:`fastpisa.energy.dissociation.DissociationPathway`), the
+        #: cut and released bodies behind ``assembly_json``'s
+        #: ``dissociation_energy`` / ``entropy``.
+        self.dissociation_pathway = None
         self.result: Dict[str, Any] = {}
         self._interfaces_json: dict = {}
         self._assembly_json: dict = {}
@@ -167,6 +184,7 @@ class PISAInterfaceAnalyzer:
             exclude_water=self.exclude_water,
             min_css=self.min_css,
             ligand_mode=self.ligand_mode,
+            symmetry=self.symmetry,
         )
         if self.mode not in MODES:
             raise ValueError(
@@ -175,11 +193,21 @@ class PISAInterfaceAnalyzer:
 
         self.result = result
         self.interfaces = result.get("interfaces_obj", [])
+        self.dissociation_pathway = result.get("dissociation_pathway")
         self._interfaces_json = result["interfaces"]
         self._assembly_json = result["assembly"]
         return result
 
     # -- accessors ---------------------------------------------------------
+    @property
+    def structure(self):
+        """The parsed :class:`~fastpisa.parser.pdb_parser.PDBStructure`.
+
+        Documented since 0.1 but never assigned, so reading it raised
+        ``AttributeError``; it now exposes the cached parse.
+        """
+        return self._parsed_structure()
+
     @property
     def interfaces_json(self) -> dict:
         """The full interfaces.json document (as a dict)."""
@@ -210,11 +238,15 @@ class PISAInterfaceAnalyzer:
         from fastpisa import __version__
         from fastpisa.surface.freesasa_backend import surface_backend_info
 
-        surface = surface_backend_info()
+        surface = surface_backend_info(self.point_density)
         return {
             "fastpisa_version": __version__,
             "input_file": self.path.name,
-            "coordinate_scope": "first model only; no symmetry generation",
+            "coordinate_scope": (
+                "first model only; crystal symmetry mates generated"
+                if self.symmetry == "crystal"
+                else "first model only; no symmetry generation"),
+            "symmetry": self.symmetry,
             "probe_radius_A": self.probe_radius,
             "point_density": self.point_density,
             "contact_cutoff_A": self.interface_cutoff,
@@ -222,6 +254,10 @@ class PISAInterfaceAnalyzer:
             "exclude_water": self.exclude_water,
             "surface_backend": surface["backend"],
             "surface_algorithm": surface["algorithm"],
+            # What the active engine integrates over. point_density above
+            # drives the Python Shrake-Rupley engine; the FreeSASA path runs
+            # Lee-Richards with a pinned slice count and ignores it.
+            "surface_quadrature": surface["quadrature"],
             "surface_backend_version": surface["version"],
         }
 

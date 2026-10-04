@@ -52,3 +52,6 @@ tests/data/reference/pdb/
 # Residue-level calibration table (local, ~10-20 MB; rebuild with
 # examples/extract_calibration_features.py --residues)
 tests/data/calibration/residues.json.gz
+
+# superpowers plan workspaces (ledger, briefs, review packages): scratch
+.superpowers/

@@ -308,16 +308,21 @@ class GroupInterface:
         from fastpisa import __version__
         from fastpisa.surface.freesasa_backend import surface_backend_info
 
-        surface = surface_backend_info()
+        point_density = self.provenance.get("point_density", 480)
+        surface = surface_backend_info(point_density)
         p = {
             "fastpisa_version": __version__,
             "probe_radius_A": 1.4,
-            "point_density": 480,
+            "point_density": point_density,
             "contact_cutoff_A": 5.0,
             "ligand_mode": "separate",
             "exclude_water": True,
             "surface_backend": surface["backend"],
             "surface_algorithm": surface["algorithm"],
+            # The quadrature that ACTUALLY ran. Reporting "point density 480"
+            # beside a Lee-Richards backend was wrong twice over: that engine
+            # integrates over slices and ignores the point count entirely.
+            "surface_quadrature": surface["quadrature"],
             "surface_backend_version": surface["version"],
         }
         p.update(self.provenance)
@@ -330,8 +335,8 @@ class GroupInterface:
             "Biol. 2007) calibrated against the PDBe PISA service. Solvent-accessible "
             f"surface areas were computed with a {p['probe_radius_A']:g} A probe, "
             "NACCESS/Chothia atomic radii, and heavy atoms only, using surface backend "
-            f"{p['surface_backend']}{backend_version} ({p['surface_algorithm']}; requested "
-            f"point density {p['point_density']}). An interface is defined by the surface buried on "
+            f"{p['surface_backend']}{backend_version} ({p['surface_algorithm']}, "
+            f"{p['surface_quadrature']}). An interface is defined by the surface buried on "
             "association, its area being half the total buried on both molecules. "
             "The solvation free-energy gain is the sum of per-atom solvation parameters "
             "times buried area; the stabilisation energy adds PISA's per-bond terms for "

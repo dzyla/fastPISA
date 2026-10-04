@@ -96,9 +96,14 @@ def _cocomaps_salt_bridge(res1: str, a1: str, res2: str, a2: str) -> bool:
 
 # Aromatic (pi) side-chain atoms for pi interactions
 AROMATIC_RESIDUES = {"PHE", "TYR", "TRP", "HIS"}
+# Ring atoms only: these gate the pi classes whose GEOMETRY is then verified
+# against fastpisa.cocomaps.rings.RING_GROUPS, so the two must agree about
+# what a ring is. Tyr OH (a hydroxyl substituent) and thymine C7 (the
+# 5-methyl) are not ring atoms and were removed;
+# tests/test_bond_chemistry_single_source.py pins the agreement.
 AROMATIC_RING_ATOMS = {
     "PHE": {"CG", "CD1", "CD2", "CE1", "CE2", "CZ"},
-    "TYR": {"CG", "CD1", "CD2", "CE1", "CE2", "CZ", "OH"},
+    "TYR": {"CG", "CD1", "CD2", "CE1", "CE2", "CZ"},
     "TRP": {"CG", "CD1", "CD2", "CE2", "CE3", "CZ2", "CZ3", "CH2", "NE1"},
     "HIS": {"CG", "ND1", "CD2", "CE1", "NE2"},
 }
@@ -107,32 +112,24 @@ NUCLEOBASE_AROMATIC = {
     "A": {"N1", "C2", "N3", "C4", "C5", "C6"},
     "G": {"N1", "C2", "N3", "C4", "C5", "C6", "N7", "C8", "N9"},
     "C": {"N1", "C2", "N3", "C4", "C5", "C6"},
-    "T": {"N1", "C2", "N3", "C4", "C5", "C6", "C7"},
+    "T": {"N1", "C2", "N3", "C4", "C5", "C6"},
     "U": {"N1", "C2", "N3", "C4", "C5", "C6"},
     "DA": {"N1", "C2", "N3", "C4", "C5", "C6"},
     "DG": {"N1", "C2", "N3", "C4", "C5", "C6", "N7", "C8", "N9"},
     "DC": {"N1", "C2", "N3", "C4", "C5", "C6"},
-    "DT": {"N1", "C2", "N3", "C4", "C5", "C6", "C7"},
+    "DT": {"N1", "C2", "N3", "C4", "C5", "C6"},
     "DU": {"N1", "C2", "N3", "C4", "C5", "C6"},
 }
 
 # H-bond donor / acceptor heavy atoms (N and O) by residue
 # Keyed by residue+atom; value is set of {"donor", "acceptor"}
-HBOND_ATOMS_AA = {
-    ("ASN", "OD1"): {"acceptor"}, ("ASN", "ND2"): {"donor"},
-    ("ASP", "OD1"): {"acceptor"}, ("ASP", "OD2"): {"acceptor"},
-    ("GLN", "OE1"): {"acceptor"}, ("GLN", "NE2"): {"donor"},
-    ("GLU", "OE1"): {"acceptor"}, ("GLU", "OE2"): {"acceptor"},
-    ("HIS", "ND1"): {"donor", "acceptor"}, ("HIS", "NE2"): {"donor", "acceptor"},
-    ("SER", "OG"): {"donor", "acceptor"},
-    ("THR", "OG1"): {"donor", "acceptor"},
-    ("TYR", "OH"): {"donor", "acceptor"},
-    ("TRP", "NE1"): {"donor"},
-    ("CYS", "SG"): {"donor", "acceptor"},
-    ("MET", "SD"): {"acceptor"},
-    # Backbone
-    ("_BB", "N"): {"donor"}, ("_BB", "O"): {"acceptor"},
-}
+# NOTE: there is deliberately NO donor/acceptor table here. H-bond
+# chemistry lives in fastpisa.interface.bonds (HB_ROLES / hb_roles), which is
+# the calibrated one, and this module reaches it through
+# fastpisa.interface.contacts.is_hydrogen_bond. A local copy existed until it
+# was found to disagree (proline N as a donor, ribose 2'-OH unable to donate)
+# while being silently overwritten downstream.
+
 
 # Atoms considered polar (candidate H-bond / polar contact)
 def is_polar_atom(atom_name: str, element: str) -> bool:
@@ -185,6 +182,20 @@ VDW_CONTACT_TOLERANCE = 0.5
 PROMISCUOUS_AA_SET = {nuc for nuc in NUCLEOBASE_AROMATIC}
 
 
+def _shared_hbond_chemistry(res1, a1, el1, res2, a2, el2, dist) -> bool:
+    """Donor/acceptor screen from the ONE calibrated role table.
+
+    Used only when ``classify_atom_pair`` is called without a geometric
+    verdict. The pipeline always supplies one (``run_core`` passes
+    ``hbond_pairs`` from :func:`fastpisa.interface.bonds.detect_bond_flags`),
+    so this is a convenience path for direct callers -- and it must not
+    become a second definition of "hydrogen bond".
+    """
+    from fastpisa.interface.contacts import is_hydrogen_bond
+
+    return is_hydrogen_bond(res1, a1, el1, res2, a2, el2, dist)
+
+
 def classify_atom_pair(
     res1: str,
     atom1: str,
@@ -203,9 +214,10 @@ def classify_atom_pair(
     Returns one of INTERACTION_TYPES.
 
     ``is_hbond``: pre-computed geometric H-bond verdict for this pair (from
-    :mod:`fastpisa.interface.bonds`). When provided it replaces the
-    table-only ``_hbond`` rule so all fastPISA outputs share one H-bond
-    definition; ``None`` falls back to the legacy rule.
+    :mod:`fastpisa.interface.bonds`). The pipeline always supplies it, so
+    every fastPISA output shares one H-bond definition; ``None`` falls back
+    to the donor/acceptor screen of that same table (no angles, no
+    capacities) via :func:`_shared_hbond_chemistry`.
 
     ``pi_verdicts``: pre-computed ring-geometry verdicts
     ``(pi_pi_ok, cation_pi_ok, ch_pi_ok)`` from
@@ -250,8 +262,8 @@ def classify_atom_pair(
     #    bonds; distance + antecedent angles), use it -- single source of
     #    truth with the PISA-calibrated counts. Weak C-H...O/N keeps its own
     #    3.8 A band.
-    if is_hbond if is_hbond is not None else (
-            dist < HBOND_DISTANCE and _hbond(res1_u, a1, res2_u, a2, el1_u, el2_u)):
+    if is_hbond if is_hbond is not None else _shared_hbond_chemistry(
+            res1_u, a1, el1_u, res2_u, a2, el2_u, dist):
         return "hydrogen_bond"
     if dist <= WEAK_HBOND_DIST:
         # weak C-H ... O/N: the carbon must actually carry a hydrogen
@@ -315,46 +327,3 @@ def _is_ring_atom(res_name: str, atom_name: str, element: str) -> bool:
     return False
 
 
-def _hbond(res1: str, a1: str, res2: str, a2: str, el1: str, el2: str) -> bool:
-    """Rule-based H-bond detection between two N/O heavy atoms.
-
-    A contact is an H-bond when one side provides a donor (N-H or O-H) and
-    the other an acceptor (N or O). If neither side has an explicit donor
-    role, accept N-donor/O-acceptor generic roles (e.g. for backbone atoms).
-    A contact between two "acceptor-only" oxygens is not an H-bond.
-    """
-    nuc = ("N", "O")
-    if el1 not in nuc or el2 not in nuc:
-        return False
-
-    role1 = _atoms_roles(res1, a1)
-    role2 = _atoms_roles(res2, a2)
-    if "donor" in role1 and "acceptor" in role2:
-        return True
-    if "donor" in role2 and "acceptor" in role1:
-        return True
-    # Neither side is a donor: only accept if at least one atom is an N
-    # (generic backbone amide N is a donor). Two acceptor-only O's: no.
-    if "donor" in role1 or "donor" in role2:
-        return True
-    if el1 == "N" or el2 == "N":
-        return True
-    return False
-
-
-def _atoms_roles(res_name: str, atom_name: str) -> set:
-    key = (res_name, atom_name)
-    if key in HBOND_ATOMS_AA:
-        return HBOND_ATOMS_AA[key]
-    # Backbone defaults
-    if atom_name == "N":
-        return {"donor"}
-    if atom_name == "O":
-        return {"acceptor"}
-    # Generic N = donor, generic O = acceptor
-    el = atom_name[:1]
-    if el == "N":
-        return {"donor"}
-    if el == "O":
-        return {"acceptor"}
-    return set()

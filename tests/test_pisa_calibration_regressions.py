@@ -59,8 +59,15 @@ class TestOutputPackageImportable:
         assert asm["buried_surface_area"] < asm["accessible_surface_area"]
 
 
+@pytest.mark.filterwarnings("ignore:calculate_p_value:DeprecationWarning")
 class TestPValueIsNotDegenerate:
-    """The P-value must vary with interface chemistry, not clamp for everything."""
+    """The P-value must vary with interface chemistry, not clamp for everything.
+
+    These exercise the DEPRECATED ``calculate_p_value`` on purpose: it stays
+    importable for external callers, so its "does not clamp for every real
+    interface" regression still has to hold. The live model is
+    ``calculate_p_value_pisa``, covered by ``test_vs_pdbe_pisa.py``.
+    """
 
     def test_p_value_varies_across_realistic_interfaces(self):
         # Interfaces spanning the range seen in the references (24 - 3700 A^2),

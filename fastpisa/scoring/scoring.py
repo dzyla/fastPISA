@@ -170,6 +170,15 @@ def calculate_p_value(
         of interfaces within one structure, not for cross-tool comparison, and
         treat assembly predictions based on them as preliminary.
     """
+    import warnings
+
+    warnings.warn(
+        "calculate_p_value is a pre-calibration model that no fastPISA "
+        "pipeline uses; use calculate_p_value_pisa, which implements PISA's "
+        "random-surface-patch definition and is validated against it",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if interface_area <= 0 or total_asa <= 0:
         return 0.5
 
@@ -261,6 +270,14 @@ def calculate_css(
         Values differ from PDBe PISA and should be treated as a relative
         significance heuristic, not an absolute calibrated score.
     """
+    import warnings
+
+    warnings.warn(
+        "calculate_css is a pre-calibration model that no fastPISA pipeline uses; "
+        "use calculate_css_pisa, which is fitted to PISA's CSS",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if total_asa <= 0:
         total_asa = 1.0
 
@@ -313,6 +330,14 @@ def classify_interface(
         ``"biological"`` if the interface is likely biologically relevant,
         ``"crystal"`` otherwise.
     """
+    import warnings
+
+    warnings.warn(
+        "classify_interface is a pre-calibration model that no fastPISA pipeline uses; "
+        "its thresholds are hand-picked, not fitted; read p_value, css and interface_area and apply your own criteria",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if (p_value < 0.5 and css >= 0.5 and interface_area >= 800.0):
         return "biological"
     return "crystal"

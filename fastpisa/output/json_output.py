@@ -13,13 +13,26 @@ Interface entries are serialised from the `Interface` dataclass. Field names fol
 PDBe vocabulary (`interface_area`, `solvation_energy`, `number_hydrogen_bonds`, ...) so a
 document can be diffed against a PDBe response.
 
-CALIBRATION STATUS (2026-08-29). All quantitative fields are calibrated against the
-ORIGINAL PISA engine (EBI PDBe PISA service) over 117 matched identity interfaces from
-21 PDB entries (see fastpisa/reference/ and tests/test_vs_pdbe_pisa.py): interface area
-median rel err 1.5% (1.3% for interfaces >300 A^2); solvation_energy Pearson 0.950
-(median |err| 0.94 kcal/mol); stabilization_energy Pearson 0.973; p_value median |err|
-0.125; css Spearman 0.80 (a calibrated surrogate -- exact CSS needs assembly analysis);
-H-bond counts 89% within +-1; salt bridges mean |diff| 0.13; disulfides exact.
+CALIBRATION STATUS. Do not quote numbers from this file: it is the serialiser, and
+its copy of the benchmark went stale once (it advertised the 2026-08-29 figures from
+117 interfaces / 21 entries long after the 674-entry recalibration). The single source
+of truth for accuracy is CLAUDE.md's "Validation status" section, asserted by
+tests/test_calibration_benchmark.py (grouped 10-fold CV, offline) and
+tests/test_vs_pdbe_pisa.py (the legacy in-sample entries).
+
+Assembly-level fields are NOT per-interface sums:
+
+  dissociation_energy  -sum(stabilization_energy over the interfaces CUT) - T*dS,
+                       along the cheapest dissociation pathway
+                       (fastpisa.energy.dissociation). PISA's own relation,
+                       recovered from the PDBe PISA 2.0 assembly JSON.
+  entropy              T*dS of that one dissociation (rigid-body translational
+                       term, fastpisa.energy.entropy) -- positive, and SUBTRACTED
+                       from the dissociation energy.
+
+Each interface entry also carries PDBe-shaped bond tables (hydrogen_bonds,
+salt_bridges, disulfide_bonds, covalent_bonds), whose lengths equal the matching
+number_* counts by construction.
 """
 from typing import Any, Dict, List
 
@@ -47,6 +60,17 @@ def _interface_entry(iface: Any) -> Dict[str, Any]:
         "number_covalent_bonds": iface.number_covalent_bonds,
         "number_other_bonds": iface.number_other_bonds,
     }
+    # Bond tables, PDBe-shaped: one parallel-list block per bond class, built
+    # from the SAME independent predicates the counts come from
+    # (fastpisa.interface.bonds.detect_bond_flags), so
+    # len(hydrogen_bonds["bond_distances"]) == number_hydrogen_bonds by
+    # construction. Always present, empty lists when a class has no bonds, so
+    # a consumer can iterate without null checks.
+    entry["hydrogen_bonds"] = iface.to_bond_dict("hbond")
+    entry["salt_bridges"] = iface.to_bond_dict("salt_bridge")
+    entry["disulfide_bonds"] = iface.to_bond_dict("disulfide")
+    entry["covalent_bonds"] = iface.to_bond_dict("covalent")
+
     # COCOMAPS mode attaches a contact map; omit the key entirely in PISA mode rather
         # than emitting a null, so a consumer can test membership.
     cocomaps = getattr(iface, "cocomaps", None)

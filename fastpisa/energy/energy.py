@@ -184,16 +184,27 @@ def calculate_entropy(
     float
         Entropy contribution in kcal/mol.
 
-    .. warning::
-        Rough approximation. PISA uses a statistical-mechanical model
-        (translational/rotational entropy of the dissociating molecules via
-        Boltzmann statistics, Krissinel & Henrick 2007 Eq. 7-11); the linear
-        formula here is a hand-tuned surrogate and will diverge from the CCP4
-        binary, which matters most for ``dissociation_energy``. Use for
-        relative ranking only.
+    .. deprecated:: 0.5.0
+        Superseded by :func:`fastpisa.energy.entropy.dissociation_entropy`,
+        which implements the rigid-body translational entropy with one
+        constant fitted to PISA's own assembly entropies (median |error|
+        0.91 kcal/mol, r = 0.983). This surrogate scores a median error of
+        468 kcal/mol against the same values, anticorrelated (r = -0.11), and
+        is per-interface where the real quantity belongs to one dissociation
+        of the whole assembly. Kept only so external callers do not break.
     """
-    # Simplified: entropy ~ 0.02 * interface_area + 0.5 * n_residues_total
-    # This is a rough approximation calibrated to PISA values
+    import warnings
+
+    warnings.warn(
+        "calculate_entropy is a pre-calibration model that no fastPISA pipeline uses; "
+        "it is an area-based surrogate, not an entropy (median error 468 kcal/mol against PISA); use fastpisa.energy.entropy.dissociation_entropy",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    # NOT calibrated, despite what this comment used to claim: measured
+    # against PISA's own assembly entropies it is off by a median of
+    # 468 kcal/mol and ANTICORRELATED (r = -0.11). It is an area score, not
+    # an entropy. See fastpisa.energy.entropy.
     entropy = 0.02 * interface_area + 0.5 * (n_residues_1 + n_residues_2)
     return entropy
 
@@ -218,6 +229,14 @@ def calculate_dissociation_energy(
     float
         Total dissociation energy (kcal/mol).  Positive = stable.
     """
+    import warnings
+
+    warnings.warn(
+        "calculate_dissociation_energy is a pre-calibration model that no fastPISA pipeline uses; "
+        "it sums every interface and ignores the dissociation pathway; use fastpisa.energy.dissociation.assembly_dissociation",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     total = 0.0
     for area, solv, entropy in zip(interface_areas, solv_energies, entropies):
         total += -solv + entropy
@@ -232,6 +251,14 @@ def calculate_stabilization_energy(
 
     PISA's stabilization energy = ΔGsolv + (H-bond + salt bridge contributions)
     """
+    import warnings
+
+    warnings.warn(
+        "calculate_stabilization_energy is a pre-calibration model that no fastPISA pipeline uses; "
+        "it reads mutually exclusive bond_type labels; use bond_energy with an interface's independent bond counts",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     contact_energy, _, _, _, _ = calculate_contact_energy(contacts)
     return solv_energy + contact_energy
 

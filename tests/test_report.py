@@ -89,7 +89,14 @@ def test_tables_and_prose(res):
     methods = gi.methods_paragraph()
     assert "PISA" in methods and "COCOMAPS-compatible" in methods
     assert "first coordinate model" in methods and "symmetry" in methods
-    assert "surface backend" in methods and "point density" in methods
+    # The methods text must name the engine AND the quadrature it really ran
+    # ("20 slices" for Lee-Richards, "N sphere points" for Shrake-Rupley);
+    # it used to claim a point density even when Lee-Richards was running.
+    assert "surface backend" in methods
+    assert ("slices" in methods or "sphere points" in methods)
+    from fastpisa.surface.freesasa_backend import surface_backend_info
+    info = surface_backend_info(480)
+    assert info["algorithm"] in methods and info["quadrature"] in methods
     d = gi.to_dict()
     assert d["n_hbonds"] == gi.n_hbonds and d["pairs"] == ["A + D"]
     assert d["provenance"]["coordinate_scope"] == "first model only; no symmetry generation"

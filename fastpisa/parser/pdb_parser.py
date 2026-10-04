@@ -90,6 +90,13 @@ class PDBStructure:
     space_group: str = ""
     crystal_info: dict = field(default_factory=dict)
     source: str = ""
+    #: Residue names the FILE declares to be part of a polymer (``SEQRES``
+    #: in PDB, ``_pdbx_poly_seq_scheme`` / ``_entity_poly_seq`` in mmCIF).
+    #: These are polymer residues even when they are deposited as HETATM and
+    #: absent from the hardcoded standard sets -- D-amino acids, sulfotyrosine,
+    #: acetyl caps, modified nucleotides. Empty when the file declares
+    #: nothing, in which case only the hardcoded sets apply.
+    polymer_residues: set = field(default_factory=set)
 
     @property
     def atoms(self) -> List[Atom]:
@@ -105,20 +112,53 @@ class PDBStructure:
         return None
 
 
+#: CRYST1 is fixed-width (PDB v3.3). Field widths are 9 for the cell edges
+#: and 7 for the angles -- NOT 5, which is what this was reading: 1acb's
+#: "55.300 59.400 42.500 90.00 99.10 90.00 P 1 21 1" came out as a = 55.0,
+#: b = 0.3, c = 59.0, alpha = 400.0 with the space group swallowing three
+#: angle columns.
+_CRYST1_FIELDS = (
+    ("a", 6, 15, float),
+    ("b", 15, 24, float),
+    ("c", 24, 33, float),
+    ("alpha", 33, 40, float),
+    ("beta", 40, 47, float),
+    ("gamma", 47, 54, float),
+    ("space_group", 55, 66, str),
+    ("z", 66, 70, int),
+)
+
+
+def is_water_ligand(ccd_id: str) -> bool:
+    """Whether a residue name is water/ordered solvent.
+
+    Duplicated from :mod:`fastpisa.interface.contacts` to keep the parser
+    free of a circular import. Used only to stop a malformed SEQRES from
+    promoting water to a polymer residue.
+    """
+    return (ccd_id or "").upper() in {
+        "HOH", "WAT", "OH2", "DOD", "TP3", "TIP", "SOL"}
+
+
 def _parse_cryst1_record(line: str) -> dict:
-    """Parse a CRYST1 record."""
+    """Parse a CRYST1 record into cell parameters, space group and Z.
+
+    Each field is parsed independently: a truncated record (Z omitted, no
+    space group) is common in the wild and must still yield the cell rather
+    than discarding everything parsed so far.
+    """
     info = {}
-    try:
-        info["a"] = float(line[6:11])
-        info["b"] = float(line[11:16])
-        info["c"] = float(line[16:21])
-        info["alpha"] = float(line[21:26])
-        info["beta"] = float(line[26:31])
-        info["gamma"] = float(line[31:36])
-        info["space_group"] = line[36:66].strip()
-        info["z"] = int(line[66:70])
-    except (ValueError, IndexError):
-        pass
+    for name, start, end, cast in _CRYST1_FIELDS:
+        raw = line[start:end].strip()
+        if not raw:
+            continue
+        if cast is str:
+            info[name] = raw
+            continue
+        try:
+            info[name] = cast(raw)
+        except ValueError:
+            continue
     return info
 
 
@@ -146,28 +186,90 @@ def is_mmcif_path(path) -> bool:
     ))
 
 
-def _site_key(atom: Atom) -> tuple:
-    """Identity of one atom site before alternate-conformer selection."""
+def _residue_key(atom: Atom) -> tuple:
+    """Identity of the RESIDUE an atom site belongs to.
+
+    Deliberately excludes the residue name. Alternate conformers of one site
+    may carry DIFFERENT names (altloc A = SER, altloc B = ALA: a partially
+    occupied residue, a modelled point mutation, a mixed population). Keying
+    on the name made those two conformers look like two residues, so both
+    survived selection and left pairs of atoms at identical coordinates that
+    occlude each other in the isolated-monomer ASA.
+    """
     return (
         atom.auth_asym_id,
         atom.label_asym_id,
         atom.auth_seq_id,
         atom.label_seq_id,
         atom.icode,
-        atom.res_name,
-        atom.atom_name.strip(),
     )
 
 
-def _prefer_altloc(candidate: Atom, current: Atom) -> bool:
-    """Whether *candidate* wins the deterministic alternate-location rule."""
-    candidate_blank = candidate.altloc == " "
-    current_blank = current.altloc == " "
-    if candidate_blank != current_blank:
-        return candidate_blank
-    if candidate.occupancy != current.occupancy:
-        return candidate.occupancy > current.occupancy
-    return candidate.altloc < current.altloc
+def _wins_same_name(candidate: Atom, current: Atom) -> bool:
+    """Tie-break two retained atoms that share one name in one residue.
+
+    Only reachable on a malformed file (a blank-altloc atom alongside a
+    lettered one, or a duplicated name). Blank wins -- it is the atom the
+    conformers share -- then the higher occupancy, then the first seen.
+    """
+    if (candidate.altloc == " ") != (current.altloc == " "):
+        return candidate.altloc == " "
+    return candidate.occupancy > current.occupancy
+
+
+def _select_altlocs(atoms: List[Atom]) -> List[Atom]:
+    """Keep one consistent alternate conformer per residue.
+
+    Alternate-location labels are a SET: conformer A is one modelled
+    conformation of the whole residue and B another. Choosing the
+    best-occupied atom independently per atom name can take CA from B and CB
+    from A -- a chimeric residue that was never modelled -- so the choice is
+    made once per residue:
+
+    * atoms with a blank altloc are shared by every conformer and always kept;
+    * among the lettered conformers, the one with the highest total occupancy
+      over the residue wins, ties broken by the alphabetically first label;
+    * the winning conformer fixes the residue's name, so microheterogeneity
+      collapses to a single residue.
+
+    Within the retained set, a repeated atom name (a malformed file) keeps
+    the higher occupancy, then the first occurrence.
+    """
+    occupancy_by_label: dict = {}
+    for atom in atoms:
+        if atom.altloc == " ":
+            continue
+        key = _residue_key(atom)
+        totals = occupancy_by_label.setdefault(key, {})
+        totals[atom.altloc] = totals.get(atom.altloc, 0.0) + atom.occupancy
+
+    winner = {
+        key: max(sorted(totals), key=lambda label: totals[label])
+        for key, totals in occupancy_by_label.items()
+    }
+
+    selected: dict = {}
+    for atom in atoms:
+        key = _residue_key(atom)
+        if atom.altloc != " " and winner.get(key) != atom.altloc:
+            continue
+        name_key = (key, atom.atom_name.strip())
+        current = selected.get(name_key)
+        if current is None or _wins_same_name(atom, current):
+            selected[name_key] = atom
+
+    # The winning conformer's residue name is the residue's name, including
+    # for the blank-altloc atoms it shares.
+    name_of: dict = {}
+    for (key, _), atom in selected.items():
+        if atom.altloc != " ":
+            name_of[key] = (atom.res_name, atom.label_comp_id)
+    for (key, _), atom in selected.items():
+        names = name_of.get(key)
+        if names is not None and atom.res_name != names[0]:
+            atom.res_name, atom.label_comp_id = names
+
+    return list(selected.values())
 
 
 def _chains_from_atoms(atoms: List[Atom]) -> List[Chain]:
@@ -203,7 +305,7 @@ def parse_pdb(path: str) -> PDBStructure:
     PDBStructure
     """
     structure = PDBStructure()
-    selected_atoms = {}
+    parsed_atoms: List[Atom] = []
     seen_model = False
 
     if str(path).endswith(".gz"):
@@ -223,7 +325,13 @@ def parse_pdb(path: str) -> PDBStructure:
             if rec == "ENDMDL" and seen_model:
                 break
             if rec not in ("ATOM", "HETATM"):
-                if rec == "HEADER":
+                if rec == "SEQRES":
+                    # Columns 20-70 hold up to 13 three-letter residue names.
+                    for name in line[19:70].split():
+                        upper = name.strip().upper()
+                        if upper and not is_water_ligand(upper):
+                            structure.polymer_residues.add(upper)
+                elif rec == "HEADER":
                     structure.source = line[10:70].strip()
                 elif rec == "CRYST1":
                     structure.crystal_info = _parse_cryst1_record(line)
@@ -258,9 +366,19 @@ def parse_pdb(path: str) -> PDBStructure:
             # calcium and silently changes radii and solvation parameters.
             el = line[76:78].strip().upper()
             if not el:
+                # Deliberately fatal rather than guessed. The element sets the
+                # surface radius AND the solvation parameter, so a wrong guess
+                # silently changes dG: " CA " (alpha carbon) and "CA  "
+                # (calcium) differ only by column alignment, which
+                # non-conforming writers do not respect. A calibrated tool
+                # must not quietly invent the input it was not given.
                 raise ValueError(
                     f"Invalid PDB atom record at line {line_number}: element "
-                    "columns 77-78 are blank"
+                    "columns 77-78 are blank. fastPISA will not guess the "
+                    "element (it sets both the surface radius and the "
+                    "solvation parameter). Fill columns 77-78 -- e.g. "
+                    "`gemmi convert in.pdb out.pdb`, or convert to mmCIF and "
+                    "pass that instead."
                 )
 
             group = rec
@@ -285,12 +403,9 @@ def parse_pdb(path: str) -> PDBStructure:
                 auth_seq_id=res_seq,
                 group=group,
             )
-            key = _site_key(atom)
-            current = selected_atoms.get(key)
-            if current is None or _prefer_altloc(atom, current):
-                selected_atoms[key] = atom
+            parsed_atoms.append(atom)
 
-    structure.chains = _chains_from_atoms(list(selected_atoms.values()))
+    structure.chains = _chains_from_atoms(_select_altlocs(parsed_atoms))
     return structure
 
 
@@ -339,6 +454,17 @@ def parse_mmcif(path: str) -> PDBStructure:
     except Exception:
         pass
 
+    # Residues the file declares as polymer. _pdbx_poly_seq_scheme is the
+    # per-chain expansion and the most widely present; _entity_poly_seq is
+    # the canonical fallback.
+    for tag in ("_pdbx_poly_seq_scheme.mon_id", "_entity_poly_seq.mon_id"):
+        values = [str(v).strip().upper() for v in block.find_values(tag)]
+        if values:
+            structure.polymer_residues = {
+                v for v in values
+                if v and v not in (".", "?") and not is_water_ligand(v)}
+            break
+
     # The atom_site table retains label/auth identifiers and model/altloc
     # fields that Gemmi's high-level Structure view may normalize away.
     structure.chains = _parse_mmcif_atom_site_manual(block)
@@ -383,7 +509,7 @@ def _parse_mmcif_atom_site_manual(block) -> list:
             return default
 
     first_model = value("pdbx_PDB_model_num", 0, "1")
-    selected_atoms = {}
+    parsed_atoms: List[Atom] = []
     for row in range(n_rows):
         if value("pdbx_PDB_model_num", row, first_model) != first_model:
             continue
@@ -422,8 +548,5 @@ def _parse_mmcif_atom_site_manual(block) -> list:
             auth_seq_id=auth_seq,
             group=group,
         )
-        key = _site_key(atom)
-        current = selected_atoms.get(key)
-        if current is None or _prefer_altloc(atom, current):
-            selected_atoms[key] = atom
-    return _chains_from_atoms(list(selected_atoms.values()))
+        parsed_atoms.append(atom)
+    return _chains_from_atoms(_select_altlocs(parsed_atoms))
