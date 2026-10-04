@@ -37,6 +37,9 @@ ana.summary(), ana.write_json("out/")
   seconds); `--emit-sigma` prints a paste-ready SIGMA block
 - `python -m fastpisa.cli in.pdb --symmetry crystal -o out/` — crystal mode:
   packing interfaces with symmetry mates (needs a cell + space group)
+- `python examples/validate_assemblies.py` — assembly prediction vs PISA's
+  own predictions, offline (~2.5 min); `--record` rewrites the measured
+  record that `tests/test_assembly_vs_pisa.py` asserts
 - `python examples/validate_crystal.py` — crystal mode vs PISA on the 37
   cached entries, interface by interface, offline (~2 min);
   `--blind` runs the recorded 60-entry blind draw (network on first run),
@@ -175,6 +178,52 @@ or interface detection (our interface-atom counts match PISA's 123/114 vs
 117/114). Occupancy-weighting the buried area moves 1266 -> 989 and
 occupancy-squared -> 830, but neither is principled and neither reaches 774,
 so no rule was invented. Treat areas from such entries as indicative.
+
+## Assembly prediction (`predict_assemblies=True`)
+
+Enumerates the finite assemblies a crystal admits and ranks them by
+macromolecular size then `ΔG_diss`. Opt-in; needs `symmetry="crystal"` to be
+useful. `--predict-assemblies` on the CLI.
+
+- **Candidates come from NESTED interface subsets** in PISA's dissociation
+  order (interfaces sorted most-stabilising first; grow with the top k for
+  k = 1..n). Bounded at n iterations. An exhaustive 2^n search is a non-goal.
+- **Finite vs infinite is the hard part.** A component that reaches the same
+  molecule under the same ROTATION at a different cell repeats
+  translationally: a lattice, sheet or fibre, not an assembly. The node cap
+  (`MAX_ASSEMBLY_NODES = 512`) is a backstop only, and `GrowthResult.reason`
+  says which guard fired -- `tests/test_assembly_growth.py` asserts the
+  rotation test fires first, not the cap.
+- **The primary assembly is the largest STABLE one, not the most strongly
+  bound.** `ΔG_diss` measures an assembly's weakest link, so it is NOT
+  monotonic in size: a tight dimer out-scores the tetramer containing it,
+  and a chain plus a bound ion scores high (pulling an ion off costs area
+  for almost no entropy gain), which put mmsize=1 "assemblies" first for
+  1aay, 1gpw and 1tsr. Ranking by ΔG_diss alone scored 38.2%; PISA's own
+  output settles the convention -- its primary assembly has the largest
+  mmsize in 31 of 34 cached entries and the highest ΔG_diss in only 25 of
+  34. Don't "fix" this back.
+- **Ligand-only components are dropped**: with `ligand_mode="separate"` a
+  lone ion is its own molecule and "an assembly of one ion" is noise.
+- Measured vs PISA's own predictions (`multimers.pisa`, cached for the 37
+  reference entries): top-assembly **mmsize match 50.0%**, composition
+  **26.5%**, author-deposited assembly (PISA's `R350`) **50.0%**, recall of
+  PISA's assembly sizes **82.5%**. Recorded in
+  `tests/data/reference/assembly_validation.json` (with the pre-ranking-fix
+  numbers in its `history`) and asserted by
+  `tests/test_assembly_vs_pisa.py`. Re-measure with
+  `python examples/validate_assemblies.py --record`; do NOT relax the
+  assertion instead.
+- **Where the remaining gap is**: recall 82.5% against a 50% top-assembly
+  match means the right assembly is usually GENERATED and merely not ranked
+  first. Both directions occur -- a weak bridging crystal contact grows a
+  dimer into a doubled oligomer (1aay, 1e6e, 9ant, 1cgi), and the nested
+  ordering never closes the full oligomer where PISA does (1a3n ACBD,
+  1ktz A6B6, 2ptc E4I4, 1tro). Closing it needs a stability criterion better
+  than `ΔG_diss > 0`; choosing a threshold against this set would be fitting
+  the reference, which is what QSbio is for.
+- `total_asm = 0` is a real PISA answer (1brs -- no stable assembly for
+  barnase-barstar) and round-trips through the reference parser.
 
 ## Removed on purpose
 

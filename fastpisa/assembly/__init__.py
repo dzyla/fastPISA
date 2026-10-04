@@ -7,10 +7,13 @@ assemblies, so the packing interfaces original PISA reports for an
 experimental entry are outside its scope (see the README's benchmark note:
 the comparison is restricted to PISA's identity-symmetry interfaces).
 
-What IS here, in :mod:`fastpisa.energy.dissociation`, is the assembly
-dissociation pathway for the given coordinates: the cheapest set of
-interfaces to break, and the resulting dG_diss and T*dS under PISA's own
-relation.
+What IS here: :mod:`fastpisa.assembly.crystal` generates the symmetry mates,
+:mod:`fastpisa.assembly.graph` turns the crystal's interfaces into a contact
+graph of placed molecules, and :mod:`fastpisa.assembly.predict` enumerates the
+finite assemblies that graph admits and ranks them by the dissociation energy
+of :mod:`fastpisa.energy.dissociation`. What is still absent is a biological-
+versus-crystal verdict calibrated against an independent dataset; the
+predicted assemblies are its input, not a substitute for it.
 
 A ``symmetry`` module used to live here. It was never imported, never
 tested, and its docstring advertised space-group operator generation and

@@ -134,6 +134,32 @@ entry, 8 s worst case (114k atoms); 0 failures. Needs a usable cell and
 space group — without one the option is a no-op, which is what a predicted
 model wants.
 
+**Assembly prediction.** `--predict-assemblies` enumerates the finite
+assemblies the crystal admits and ranks them, most stable first:
+
+```bash
+python -m fastpisa.cli 1acb.pdb --pdb_id 1acb --symmetry crystal \
+    --predict-assemblies -o out/
+```
+
+Candidates come from nested interface subsets in PISA's dissociation order,
+not an exhaustive search, so exact agreement with PISA is not expected.
+Measured against PISA's own published predictions (`multimers.pisa`) over the
+37 cached entries:
+
+| | agreement |
+|---|---|
+| top assembly, stoichiometry (`mmsize`) | **50.0%** |
+| top assembly, full composition | 26.5% |
+| **author-deposited assembly** (PISA's `R350`) | **50.0%** |
+| recall of PISA's assembly sizes | 82.5% |
+
+Read those together: recall 82.5% against a 50% top match means the right
+assembly is usually *generated* and merely not ranked first. Closing that
+needs a stability criterion better than `ΔG_diss > 0`, and picking one
+against this set would be fitting the reference — so it is reported, not
+tuned. Reproduce with `python examples/validate_assemblies.py`.
+
 **Surface backends.** The reference engine is the pure-Python Shrake-Rupley
 implementation in `fastpisa/surface/shrake_rupley.py`; it defines the
 `--point_density` quadrature and the fitted solvation parameters are validated
