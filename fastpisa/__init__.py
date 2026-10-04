@@ -22,7 +22,7 @@ Use:
 CLI: python -m fastpisa.cli <pdb_file> --mode {combined,pisa,cocomaps}
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 
 def analyze(path, pdb_id=None, **kwargs):

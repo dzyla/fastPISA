@@ -129,6 +129,50 @@ _CRYST1_FIELDS = (
 )
 
 
+#: Base-36 digits, in the order hybrid-36 uses them.
+_BASE36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_SEQ_WIDTH = 4
+_SEQ_UPPER_BASE = 10 * 36 ** (_SEQ_WIDTH - 1)      # value of "A000" in base 36
+_SEQ_UPPER_START = 10 ** _SEQ_WIDTH                # 10000
+_SEQ_LOWER_SPAN = 26 * 36 ** (_SEQ_WIDTH - 1)      # size of the upper-case range
+
+
+def decode_sequence_number(field: str) -> int:
+    """Residue sequence number from PDB columns 23-26, hybrid-36 aware.
+
+    The field holds four characters. Up to 9999 it is a plain (possibly
+    negative) decimal. Beyond that the PDB uses **hybrid-36**: 10000 is
+    ``"A000"``, counting in base 36 through ``"ZZZZ"`` (1223055) and then
+    continuing in lower case. Chains in large ribosomes and viral capsids
+    cross that boundary.
+
+    Raises ``ValueError`` rather than returning 0 for an unreadable field.
+    Returning 0 silently merged unrelated residues: alternate-conformer
+    selection keys on (chain, sequence number, insertion code), so several
+    residues numbered 0 looked like one residue and all but one of their
+    atoms were discarded -- three atoms in, two out, no warning.
+    """
+    text = field.strip()
+    if not text:
+        raise ValueError("empty residue sequence number")
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    if len(text) > _SEQ_WIDTH or not all(c in _BASE36 or c in _BASE36.lower()
+                                        for c in text):
+        raise ValueError(f"unreadable residue sequence number: {field!r}")
+    if text[0].isupper() or text[0].isdigit():
+        value = 0
+        for char in text.upper():
+            value = value * 36 + _BASE36.index(char)
+        return value - _SEQ_UPPER_BASE + _SEQ_UPPER_START
+    value = 0
+    for char in text.upper():
+        value = value * 36 + _BASE36.index(char)
+    return (value - _SEQ_UPPER_BASE + _SEQ_UPPER_START + _SEQ_LOWER_SPAN)
+
+
 def is_water_ligand(ccd_id: str) -> bool:
     """Whether a residue name is water/ordered solvent.
 
@@ -347,17 +391,30 @@ def parse_pdb(path: str) -> PDBStructure:
             altloc = line[16].strip() if line[16].strip() else " "
             res_name = line[17:20].strip()
             chain_id = line[21].strip()
-            # int() rather than isdigit(): negative residue numbers ("  -4",
-            # common for expression tags and DNA numbered about a centre)
-            # are valid and must not collapse onto residue 0.
+            # Negative residue numbers ("  -4": expression tags, DNA
+            # numbered about a centre) and hybrid-36 above 9999 are both
+            # valid; see decode_sequence_number for why a failure here is an
+            # error rather than a silent 0.
+            if len(line) < 54:
+                raise ValueError(
+                    f"Truncated PDB atom record at line {line_number}: "
+                    f"{len(line.rstrip())} characters, but coordinates end at "
+                    "column 54")
             try:
-                res_seq = int(line[22:26])
-            except ValueError:
-                res_seq = 0
+                res_seq = decode_sequence_number(line[22:26])
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid PDB atom record at line {line_number}: "
+                    f"{exc}") from None
             icode = line[26].strip()
-            x = float(line[30:38])
-            y = float(line[38:46])
-            z = float(line[46:54])
+            try:
+                x = float(line[30:38])
+                y = float(line[38:46])
+                z = float(line[46:54])
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid PDB atom record at line {line_number}: "
+                    f"unreadable coordinates ({exc})") from None
             occupancy = float(line[54:60]) if line[54:60].strip() else 1.0
             bfactor = float(line[60:66]) if line[60:66].strip() else 0.0
 

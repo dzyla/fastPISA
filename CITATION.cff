@@ -2,30 +2,38 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "fastPISA"
 abstract: >-
-  Local Python reproduction of the CCP4/PDBe PISA interface-analysis schema,
-  with a COCOMAPS 2.0 residue-residue contact-map mode. Parses PDB and mmCIF,
-  finds biomolecular interfaces, and emits PDBe-PISA-shaped JSON.
+  Local Python reproduction of the CCP4/PDBe PISA interface analysis,
+  numerically calibrated against the original engine, with crystal
+  symmetry-mate enumeration, assembly prediction and a COCOMAPS 2.0
+  residue-residue contact-map mode. Parses PDB and mmCIF (AlphaFold-predicted
+  complexes included), finds biomolecular interfaces, and emits
+  PDBe-PISA-shaped JSON.
 keywords:
   - PISA
   - protein interfaces
   - structural biology
+  - crystal packing
+  - biological assembly
   - contact maps
   - COCOMAPS
 license: MIT
+repository-code: "https://github.com/dzyla/fastPISA"
 authors:
-  - family-names: "zyla"
-    given-names: ""
-    orcid: ""
-version: "0.2.0"
-date-released: "2026-08-10"
-preferred-citation:
-  type: software
-  title: "fastPISA: local PISA reproduction with a COCOMAPS 2.0 contact-map mode"
-  authors:
-    - family-names: "zyla"
-      given-names: ""
-  year: 2026
-  note: >-
-    Implements the interface-analysis schema of Krissinel & Henrick, J. Mol.
-    Biol. 372, 774-797 (2007) and the residue-contact classification of the
-    COCOMAPS 2.0 approach (Chawla et al., Bioinformatics 2025).
+  - family-names: "Zyla"
+    given-names: "Dawid"
+version: "0.5.0"
+date-released: "2026-10-04"
+references:
+  - type: article
+    title: "Inference of macromolecular assemblies from crystalline state"
+    authors:
+      - family-names: "Krissinel"
+        given-names: "Evgeny"
+      - family-names: "Henrick"
+        given-names: "Kim"
+    journal: "Journal of Molecular Biology"
+    volume: 372
+    start: 774
+    end: 797
+    year: 2007
+    doi: "10.1016/j.jmb.2007.05.022"
