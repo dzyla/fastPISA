@@ -129,3 +129,40 @@ def test_an_entry_with_no_reference_is_recorded_not_dropped():
     ])
     assert stats["n_entries"] == 0
     assert stats["n_no_reference"] == 1
+
+
+def test_the_committed_record_round_trips(tmp_path):
+    """--record then --report must reproduce the run's own statistics.
+
+    The committed record is what the README's 2000-entry numbers are
+    re-derived from (``tests/test_blind_benchmark.py``), so a writer that
+    dropped or reordered rows would quietly rewrite the published result.
+    """
+    bench = _harness()
+    records = [
+        {"pdb_id": "2def", "n_reference": 2, "n_matched": 2, "n_reported": 2,
+         "missing": [], "rows": [[800.0, 790.0, -5.0, -4.8],
+                                 [150.0, 160.0, -1.0, -1.2]], "seconds": 1.0},
+        {"pdb_id": "1abc", "n_reference": 1, "n_matched": 1, "n_reported": 1,
+         "missing": [], "rows": [[500.0, 505.0, -3.0, -3.1]], "seconds": 2.0},
+        {"pdb_id": "3ghi", "n_reference": 0, "n_matched": 0, "n_reported": 0,
+         "missing": [], "rows": [], "error": "no reference data"},
+    ]
+    stats = bench.summarise(records)
+    path = tmp_path / "blind_benchmark.json.gz"
+    bench._write_record(records, {"seed": bench.BENCHMARK_SEED, "n": 3,
+                                  "entries": ["1abc", "2def", "3ghi"]},
+                        stats, path=str(path))
+
+    document = bench.load_record(str(path))
+    assert document["n_drawn"] == 3
+    assert "entries" not in document["draw"], "the id list is redundant here"
+    assert [e["pdb_id"] for e in document["entries"]] == ["1abc", "2def",
+                                                          "3ghi"]
+    assert document["entries"][2]["n_reference"] == 0, "kept, not dropped"
+    assert bench.summarise(document["entries"]) == stats
+
+
+def test_a_missing_committed_record_is_not_an_error(tmp_path):
+    bench = _harness()
+    assert bench.load_record(str(tmp_path / "nothing.json.gz")) is None

@@ -16,6 +16,38 @@ same interfaces** for a structure.
 
 ## How it compares to PISA
 
+**Blind test on 2,000 PDB entries.** The strongest statement here is not the
+calibration fit — it is what happens on entries that could not have informed
+it. 2,000 entries were drawn from the same sampling frame with a *fresh seed*,
+excluding every entry behind any fitted constant, and fastPISA's crystal mode
+was compared interface by interface against original PISA's own published
+output (**26,183 PISA interfaces**, matched on chain pair *and* relative
+crystal transform):
+
+| Blind benchmark — 2,000 entries, none of them in sample | |
+|---|---|
+| PISA interfaces found | **25,985 / 26,183 — 99.24%** |
+| entries where *every* interface matched | **99.0%** (1,978 / 1,998) |
+| buried area, median rel. error | **1.20%** (89.8% of interfaces within 5%) |
+| solvation ΔG | **r 0.9927**, R² about 1:1 **0.985**, median error **0.151 kcal/mol** (91.3% within 1 kcal/mol) |
+| analysis failures | **0** (2 of the 2,000 are absent from PISA's frozen database) |
+| runtime | median **3.4 s** per entry; 2.3 h for the whole benchmark |
+
+The per-entry outcome is committed (330 kB, no coordinates), so the table is
+reproducible from a fresh clone with **no network and no cache**:
+
+```bash
+python examples/benchmark_vs_pisa.py --report     # re-derives the numbers above
+pytest tests/test_blind_benchmark.py -q           # asserts them, and that the draw was blind
+```
+
+*Where the 198 unmatched interfaces are*, stated plainly: all of them sit in
+20 of the 1,998 entries, and 112 are in 5 entries deposited with
+**un-applied `MTRIX` non-crystallographic symmetry** (icosahedral capsids:
+2ws9, 1ei7, 1qqp, 4ftb, 2zah). PISA builds those copies; crystal mode expands
+only the `CRYST1` space group, so their NCS interfaces are out of its scope.
+Of the remaining 15 entries, 8 miss a single interface each.
+
 fastPISA is calibrated against the original PISA engine on **674 PDB entries /
 6,915 interfaces / 119k interface residues** (400 entries a seeded random draw
 from a stated sampling frame, de-duplicated at 30% sequence identity; 36 legacy
@@ -149,13 +181,16 @@ relative crystal transform:
 |---|---|---|---|---|
 | cached reference set | 37 | **566 / 566 (100%)** | 1.20% | 0.995 |
 | blind random draw | 60 | **732 / 732 (100%)** | 1.16% | 0.991 |
+| **blind benchmark** | **1,998** | **25,985 / 26,183 (99.24%)** | **1.20%** | **0.993** |
 
-The blind draw is a fresh seed over the stated sampling frame
+Both blind rows are fresh seeds over the stated sampling frame
 (`fastpisa/reference/sampling.py`), disjoint from the 400 calibration and 36
-legacy entries, so no entry in it informed any constant. Median 3.4 s per
-entry, 8 s worst case (114k atoms); 0 failures. Needs a usable cell and
-space group — without one the option is a no-op, which is what a predicted
-model wants.
+legacy entries, so no entry in either informed any constant. Median 3.4 s per
+entry, 8 s worst case (114k atoms), and no entry in any of the three rows
+failed to analyse; the 198 interfaces missed in the 2,000-entry run are
+accounted for at the top of this README. Needs a usable cell and space
+group — without one the option is a no-op, which is what a predicted model
+wants.
 
 **Assembly prediction.** `--predict-assemblies` enumerates the finite
 assemblies the crystal admits and ranks them, most stable first:
@@ -548,10 +583,20 @@ and `--hotspots N` prints the top-N buried residues. The matplotlib heatmap need
    `fastpisa/reference/sampling.py`, entry list `entries.json`). Drives the
    calibration, `tests/test_calibration_benchmark.py` (out-of-sample) and
    `tests/test_vs_pdbe_pisa.py` (in-sample regression).
-2. **PDBe PISA 2.0 JSON API** (biological assemblies; covers recent
+2. **The same classic engine, blind, at scale** — a fresh-seed draw of
+   **2,000 entries** from the same sampling frame with every in-sample entry
+   excluded (`examples/benchmark_vs_pisa.py`). 26,183 PISA interfaces;
+   99.24% found, area 1.20%, ΔG r 0.9927 / median 0.151 kcal/mol. The run
+   needs network and ~2.3 h, so its per-entry outcome is frozen
+   coordinate-free in `tests/data/reference/blind_benchmark.json.gz`;
+   `--report` re-derives the statistics from it offline and
+   `tests/test_blind_benchmark.py` asserts both the statistics and the
+   blindness of the draw (no overlap with the calibration, legacy,
+   crystal-validation or assembly-validation entries).
+3. **PDBe PISA 2.0 JSON API** (biological assemblies; covers recent
    entries) — blind test on 20 depositions from 2023–2024, fastPISA run on
    the same assembly coordinates.
-3. **COCOMAPS 2.0 standalone code** (Zenodo `10.5281/zenodo.17390665`) run
+4. **COCOMAPS 2.0 standalone code** (Zenodo `10.5281/zenodo.17390665`) run
    locally on the same inputs; its residue-pair tables are cached in
    `tests/data/reference/cocomaps2/` and pinned by
    `tests/test_vs_cocomaps2.py`.
@@ -575,10 +620,14 @@ with ordered water included — 519 molecules, 134k candidate pairs — went fro
 31.5 s to 2.4 s.)
 
 Note on interface *counts*: original PISA run on a crystal entry also reports
-symmetry-mate (crystal packing) interfaces; fastPISA reports the interfaces
-present in the given coordinate set (the identity/ASU interfaces — everything
-an AlphaFold/cryo-EM model has). Comparisons therefore match on identity
-interfaces, which is a documented scope decision, not a bug.
+symmetry-mate (crystal packing) interfaces — 60% of its output. By default
+fastPISA reports the interfaces present in the given coordinate set (the
+identity/ASU interfaces — everything an AlphaFold/cryo-EM model has), which
+is the right scope for a model and keeps comparisons on identity interfaces;
+`--symmetry crystal` adds the packing interfaces and is what the
+2,000-entry blind benchmark measures. Non-crystallographic symmetry
+(`MTRIX`) is *not* expanded, so an icosahedral capsid deposited as one
+subunit stays one subunit.
 
 ---
 
@@ -638,9 +687,12 @@ fastpisa/
   (r 0.90), dissociation energy median |err| 1.9 kcal/mol, Spearman 0.98
   (n = 20). Validated by `tests/test_dissociation.py`.
 - **Symmetry**: `--symmetry crystal` enumerates crystal packing interfaces
-  with symmetry mates (see below). Biological-assembly *prediction* (searching
-  the crystal for the most stable assembly) is still not implemented; the
-  dissociation machinery it would need is in `fastpisa/energy/dissociation.py`.
+  with symmetry mates, and `--predict-assemblies` ranks the finite assemblies
+  the crystal admits (both measured against PISA above). Only the `CRYST1`
+  space group is expanded — **non-crystallographic symmetry (`MTRIX`) is
+  not**, so a virus capsid deposited as one icosahedral subunit stays one
+  subunit and PISA's NCS interfaces for it are out of scope. That accounts
+  for 112 of the 198 interfaces missed in the 2,000-entry blind benchmark.
 - **Partial occupancy**: interface areas are unreliable when many atoms carry
   occupancy < 1. On a blind 60-entry draw, the 2 entries with >10%
   partial-occupancy heavy atoms had a 33% median area error against PISA

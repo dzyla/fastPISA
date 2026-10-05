@@ -81,10 +81,20 @@ a change that moves computed numbers is called out explicitly under
   Publishing, gated on tag/package/changelog version agreement, so
   `pip install fastpisa` works and the tag can be minted as a Zenodo DOI.
 - CI now also runs on **macOS and Windows**, not ubuntu only.
-- `examples/benchmark_vs_pisa.py` — a large blind benchmark against original
-  PISA over a fresh-seed draw from the calibration sampling frame, excluding
-  every entry that informed a fitted constant. Resumable, offline
-  `--report`, caches outside the repository via `FASTPISA_BENCHMARK_CACHE`.
+- **Blind benchmark over 2,000 PDB entries** (`examples/benchmark_vs_pisa.py`)
+  — a fresh-seed draw from the calibration sampling frame with every entry
+  that informed a fitted constant excluded, compared against original PISA's
+  own published output interface by interface. **25,985 of 26,183 PISA
+  interfaces found (99.24%)**, every interface matched in **99.0%** of
+  entries, buried area median error **1.20%**, ΔG **r 0.9927** /
+  R² about 1:1 0.985 / median **0.151 kcal/mol**, 0 analysis failures,
+  median 3.4 s per entry. All 198 misses sit in 20 entries, 112 of them in 5
+  deposited with un-applied `MTRIX` non-crystallographic symmetry, which
+  crystal mode does not expand. The harness is resumable and caches outside
+  the repository (`FASTPISA_BENCHMARK_CACHE`); `--record` freezes the
+  per-entry outcome into `tests/data/reference/blind_benchmark.json.gz`
+  (330 kB, no coordinates) so `--report` and
+  `tests/test_blind_benchmark.py` re-derive and assert the numbers offline.
 - `FASTPISA_REFERENCE_DIR` and a `cache_dir` argument on
   `compare_crystal_entry`, so a multi-GB benchmark cache stays out of
   `tests/data/reference`.

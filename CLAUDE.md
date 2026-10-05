@@ -55,17 +55,38 @@ ana.summary(), ana.write_json("out/")
 - `python examples/compare_vs_pisa.py` — head-to-head vs original PISA
   (add entries with `--fetch <pdbid>`; `--assembly-entries <ids>` compares
   recent entries via the PDBe PISA 2.0 JSON API; network only for fetching)
-- `python examples/benchmark_vs_pisa.py --n 2000` — the large BLIND
-  benchmark: a fresh-seed draw from the calibration sampling frame excluding
-  every in-sample entry, fetched from the EBI and compared interface by
-  interface. Resumable (`results.jsonl`, append-only, tolerates a torn final
-  line), overlapped fetching, `--report` summarises offline. Caches 1-2 GB to
-  `benchmark_cache/` (git-ignored) or `FASTPISA_BENCHMARK_CACHE`; reference
-  data location is `FASTPISA_REFERENCE_DIR`, which keeps a big run out of the
-  committed `tests/data/reference`.
+- `python examples/benchmark_vs_pisa.py --report` — the 2000-entry blind
+  benchmark summarised from the COMMITTED record, offline, in a second. The
+  run itself is `--n 2000` (network, ~2.3 h): a fresh-seed draw from the
+  calibration sampling frame excluding every in-sample entry, fetched from
+  the EBI and compared interface by interface. Resumable (`results.jsonl`,
+  append-only, tolerates a torn final line), overlapped fetching, `--record`
+  freezes the finished run into
+  `tests/data/reference/blind_benchmark.json.gz` (per-entry rows only, no
+  coordinates). Caches 1-2 GB to `benchmark_cache/` (git-ignored) or
+  `FASTPISA_BENCHMARK_CACHE`; reference data location is
+  `FASTPISA_REFERENCE_DIR`, which keeps a big run out of the committed
+  `tests/data/reference`.
 
-## Validation status (2026-09-01; don't regress these)
+## Validation status (calibration 2026-09-01, blind benchmark 2026-10-04; don't regress these)
 
+- **BLIND, 2000 entries / 26,183 PISA interfaces** (crystal mode, fresh seed
+  20261004 over the calibration sampling frame, every in-sample entry
+  excluded): **25,985 matched (99.24%)**, every interface matched in 99.0% of
+  entries, area median 1.20% (89.8% within 5%), dG r 0.9927 / R^2(1:1) 0.985
+  / median |err| 0.151 kcal/mol (91.3% within 1), 0 analysis failures, median
+  3.4 s/entry, 2.3 h total. 2 of the 2000 are absent from PISA's frozen
+  database. This is the strongest generalisation claim the repo has -- quote
+  it with its denominators, and note that **all 198 misses sit in 20 entries,
+  112 of them in 5 with un-applied `MTRIX` NCS** (2ws9 1ei7 1qqp 4ftb 2zah;
+  icosahedral capsids PISA expands and crystal mode does not). The per-entry
+  outcome is committed coordinate-free in
+  `tests/data/reference/blind_benchmark.json.gz` (330 kB);
+  `python examples/benchmark_vs_pisa.py --report` re-derives the table with
+  no cache and no network, `--record` rewrites it after a re-measurement, and
+  `tests/test_blind_benchmark.py` asserts both the statistics and that the
+  draw is disjoint from every in-sample entry list. Don't quote these numbers
+  from prose -- they are re-derived from that record.
 - vs original PISA, **6904 identity interfaces / 119k interface residues
   from 674 entries** (400 a seeded random draw from a stated sampling frame,
   de-duplicated at 30% sequence identity; 36 legacy hand-picked). All
@@ -130,6 +151,11 @@ identity-identity). Validated against PISA:
   20261004, disjoint from the 400 calibration + 36 legacy entries):
   **732/732 matched**, area median 1.16%, dG Pearson 0.991, 0 failures,
   median 3.4 s/entry (max 8 s on 114k atoms)
+- **blind benchmark of 2000 entries** (same frame and seed, with the 60
+  above and every in-sample entry excluded; 1998 have PISA data):
+  **25,985/26,183 matched (99.24%)**, area median 1.20%, dG Pearson 0.9927,
+  0 failures -- see the validation-status section above for where the 198
+  misses are and how to re-derive the table offline
 
 Non-obvious things it depends on; all of them were bugs first:
 

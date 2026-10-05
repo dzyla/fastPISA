@@ -7,6 +7,9 @@
     # summarise whatever has finished so far, no network
     python examples/benchmark_vs_pisa.py --report
 
+    # freeze the finished run into the committed record (no network)
+    python examples/benchmark_vs_pisa.py --record
+
 The reference is original PISA's **own published output** for each entry,
 from the EBI service (``interfaces.pisa``) -- the same engine, not a local
 re-run of it. That is better ground truth than a CCP4 binary for deposited
@@ -29,12 +32,22 @@ Resumable: each finished entry is appended to ``results.jsonl`` and skipped
 on a later run, and cached downloads are reused. Interrupt and restart
 freely -- including with SIGKILL, which can leave a torn final line that the
 resume path tolerates.
+
+Auditable without the cache: ``--record`` freezes the finished run into
+``tests/data/reference/blind_benchmark.json.gz`` -- the per-entry comparison
+(PISA interfaces, how many matched, and the reference/fastPISA area and dG of
+every matched interface), about 330 kB, no coordinates. ``--report`` falls
+back to it when no local cache exists, and
+``tests/test_blind_benchmark.py`` re-derives the published statistics from it
+offline, so the headline numbers can be checked by anyone who clones the
+repository.
 """
 
 from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import gzip
 import json
 import os
 import sys
@@ -50,6 +63,11 @@ DEFAULT_CACHE = os.environ.get("FASTPISA_BENCHMARK_CACHE") or os.path.join(
 # blind draw. Reusing either would re-measure entries that are already in
 # sample.
 BENCHMARK_SEED = 20261004
+
+# The committed, coordinate-free record of a finished run. Small enough to
+# ship (~330 kB gzipped) so the published numbers are re-derivable offline.
+RECORD = os.path.join(REPO, "tests", "data", "reference",
+                      "blind_benchmark.json.gz")
 
 
 def _calibration_entries():
@@ -121,6 +139,44 @@ def _done(out_path):
                 continue          # a torn last line from an interrupted run
             done[row["pdb_id"]] = row
     return done
+
+
+def load_record(path=RECORD):
+    """The committed per-entry record of a finished run, or None.
+
+    Shared with ``tests/test_blind_benchmark.py``: the statistics in the
+    README are re-derived from this file, not asserted as literals.
+    """
+    if not os.path.exists(path):
+        return None
+    with gzip.open(path, "rt") as fh:
+        return json.load(fh)
+
+
+def _write_record(records, draw, stats, path=RECORD):
+    """Freeze a finished run: per-entry comparison only, no coordinates."""
+    document = {
+        "purpose": ("Blind benchmark of fastPISA's crystal mode against "
+                    "original PISA's own published output (EBI "
+                    "interfaces.pisa) over a fresh-seed draw from the "
+                    "calibration sampling frame. Every entry here is "
+                    "out of sample: none informed any fitted constant."),
+        "draw": {k: v for k, v in (draw or {}).items() if k != "entries"},
+        "polymer_only": True,
+        "n_drawn": len(records),
+        "measured": stats,
+        "note": ("rows are [area_ref, area_fastpisa, dG_ref, dG_fastpisa] "
+                 "per MATCHED interface; an entry with n_reference 0 is one "
+                 "PISA has no data for. Re-derive the statistics with "
+                 "examples/benchmark_vs_pisa.py --report (no cache needed) "
+                 "and re-measure with --n 2000 (network, ~2.3 h). The area "
+                 "median is over interfaces whose PISA area exceeds "
+                 "100 A^2, matching summarize_crystal."),
+        "entries": sorted(records, key=lambda r: r["pdb_id"]),
+    }
+    with gzip.open(path, "wt") as fh:
+        json.dump(document, fh)
+    return path
 
 
 def _fetch_one(pdb_id, cache_dir):
@@ -266,7 +322,14 @@ def main():
                     help="include ligand interfaces, which PDB remediation "
                          "makes unmatchable by name for older entries")
     ap.add_argument("--report", action="store_true",
-                    help="summarise finished entries only; no network")
+                    help="summarise finished entries only; no network. "
+                         "Falls back to the committed record when no local "
+                         "cache exists, so a fresh clone can check the "
+                         "published numbers")
+    ap.add_argument("--record", action="store_true",
+                    help="freeze the finished run into "
+                         "tests/data/reference/blind_benchmark.json.gz "
+                         "(per-entry comparison only, no coordinates)")
     ap.add_argument("--limit", type=int, default=None,
                     help="stop after this many NEW entries this run")
     args = ap.parse_args()
@@ -277,9 +340,29 @@ def main():
     out_path = os.path.join(args.cache_dir, "results.jsonl")
     done = _done(out_path)
 
-    if args.report:
-        _print(summarise(list(done.values())))
-        print(f"\n(from {out_path}, {len(done)} entries recorded)")
+    if args.report or args.record:
+        records, source = list(done.values()), out_path
+        if not records:
+            # A fresh clone has the record but not the multi-GB cache.
+            document = load_record()
+            if document is None:
+                print(f"nothing measured yet in {out_path}, and no "
+                      f"committed record at {RECORD}")
+                return 1
+            if args.record:
+                print(f"nothing to record: {out_path} is empty")
+                return 1
+            records, source = document["entries"], RECORD
+        stats = summarise(records)
+        _print(stats)
+        print(f"\n(from {source}, {len(records)} entries recorded)")
+        if args.record:
+            draw_path = os.path.join(args.cache_dir, "entries.json")
+            draw = None
+            if os.path.exists(draw_path):
+                with open(draw_path) as fh:
+                    draw = json.load(fh)
+            print(f"recorded -> {_write_record(records, draw, stats)}")
         return 0
 
     entries, draw = _drawn_entries(args.cache_dir, args.n, args.seed)
@@ -313,6 +396,7 @@ def main():
         json.dump({"draw": {k: v for k, v in draw.items() if k != "entries"},
                    "n_done": len(done), "measured": stats}, fh, indent=1)
     print(f"\nper-entry records : {out_path}\nsummary           : {summary_path}")
+    print("freeze it into the repository with --record")
     return 0
 
 
