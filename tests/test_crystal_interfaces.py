@@ -414,17 +414,53 @@ def test_all_pisa_polymer_interfaces_are_reproduced(pdb_id):
 
 
 def test_crystal_mode_cost_is_bounded():
-    """Expansion must stay affordable: only mates that touch are built.
+    """Expansion must stay affordable: only mates that TOUCH are built.
 
-    1prc is 10k atoms in P 43 21 2 (8 operations). Measured 2026-10-04:
-    5.1 s in crystal mode. The budget is loose enough not to be flaky and
-    tight enough to catch an expansion that stopped pruning.
+    1prc is 10k atoms in P 43 21 2 (8 operations) and its asymmetric unit
+    holds 27 molecules, so a cell window of 3x3x3 per operation screens
+    thousands of candidate placements. What has to stay small is how many of
+    them are built and analysed: measured 2026-10-04, 135 mates against 27
+    ASU molecules, 5 of the 8 operations contributing, 4 distinct cell
+    shifts.
+
+    This assertion used to be wall clock alone (``< 60 s``, measured 5.1 s),
+    which is not a property of the pruning. The pure-Python surface engine is
+    ~13x slower than FreeSASA by design, so on CI's runners the identical
+    work took 65-67 s and every ``FASTPISA_SASA_BACKEND=python`` leg failed
+    against a budget written on the accelerated one -- a red suite for a
+    hardware difference the repository documents. The structural bound is the
+    real invariant; the timing check stays as a runaway tripwire, with a
+    budget per backend.
     """
     import time
 
+    from fastpisa.surface.shrake_rupley import active_backend
+
+    path = os.path.join(REF, "pdb", "1prc.pdb.gz")
+    asu = run_core(path, mode="pisa", symmetry="none")
+
     start = time.monotonic()
-    state = run_core(os.path.join(REF, "pdb", "1prc.pdb.gz"),
-                     mode="pisa", symmetry="crystal")
+    state = run_core(path, mode="pisa", symmetry="crystal")
     elapsed = time.monotonic() - start
+
     assert state.interfaces
-    assert elapsed < 60.0, f"crystal mode on 1prc took {elapsed:.1f}s"
+
+    def _is_mate(molecule):
+        return (molecule.get("symop_no", 1) != 1
+                or tuple(molecule.get("cell") or (0, 0, 0)) != (0, 0, 0))
+
+    mates = [m for m in state.molecules if _is_mate(m)]
+    identity = [m for m in state.molecules if not _is_mate(m)]
+
+    # The asymmetric unit itself must come through unchanged...
+    assert len(identity) == len(asu.molecules)
+    # ...and the mates built must be the touching few, not the window. An
+    # expansion that stopped pruning would build 8 operations x 27 cells.
+    assert len(mates) < 10 * len(asu.molecules), (
+        f"{len(mates)} mates built from {len(asu.molecules)} ASU molecules "
+        f"-- pruning looks lost")
+
+    budget = 60.0 if active_backend() == "freesasa" else 300.0
+    assert elapsed < budget, (
+        f"crystal mode on 1prc took {elapsed:.1f}s on the "
+        f"{active_backend()} backend (budget {budget:.0f}s)")
