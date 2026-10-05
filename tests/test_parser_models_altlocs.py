@@ -116,6 +116,9 @@ def _write_mmcif(tmp_path, suffix: str = ".mmcif"):
 
 
 def test_mmcif_preserves_atom_site_identifiers_and_first_model(tmp_path):
+    # mmCIF parsing needs gemmi, which the no-optional-deps CI leg omits on
+    # purpose: numpy + scipy are the only hard requirements fastPISA claims.
+    pytest.importorskip("gemmi")
     atoms = parse_mmcif(str(_write_mmcif(tmp_path))).atoms
 
     assert len(atoms) == 2
@@ -127,6 +130,7 @@ def test_mmcif_preserves_atom_site_identifiers_and_first_model(tmp_path):
 
 @pytest.mark.parametrize("suffix", [".mmcif", ".mmcif.gz"])
 def test_core_dispatches_mmcif_suffixes(tmp_path, suffix):
+    pytest.importorskip("gemmi")
     path = _write_mmcif(tmp_path, suffix)
 
     state = run_core(str(path), mode="pisa", point_density=24)

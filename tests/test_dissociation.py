@@ -36,6 +36,32 @@ from fastpisa.energy.dissociation import (
 
 REF_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "data", "reference", "json")
+ASSEMBLY_CIFS = os.path.join(os.path.dirname(REF_JSON), "assemblies")
+
+
+def _require_assembly_coordinates():
+    """Skip when the assembly coordinate cache is absent.
+
+    PISA's published numbers for these 20 assemblies are committed
+    (``data/reference/json``), but the coordinates they were computed from
+    are not: ``data/reference/assemblies`` is 4.6 MB of RCSB assembly mmCIF
+    and is gitignored on purpose, refetched on demand (see
+    ``fetch_assembly_cif``). So a clean checkout -- CI included -- can check
+    the identity and the pathway algebra but cannot run the end-to-end
+    comparisons.
+
+    This has to SKIP rather than fall through. The loaders return ``None``
+    for a missing file and the loops ``continue``, so an absent cache used to
+    reach ``assert len(errors) == 13`` with an empty list and report a
+    missing download as an entropy-model failure: 8 red tests on every CI
+    leg for a measurement that was fine.
+    """
+    if not glob.glob(os.path.join(ASSEMBLY_CIFS, "*-assembly1.cif.gz")):
+        pytest.skip(
+            "assembly coordinate cache absent (tests/data/reference/"
+            "assemblies, gitignored). Refetch with: python -c \"from "
+            "fastpisa.reference.ebi_pisa import fetch_assembly_cif; "
+            "fetch_assembly_cif('8jfw')\"")
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +252,7 @@ def test_entropy_model_reproduces_pisa_entropies():
     from PISA's own numbers.
     """
     pytest.importorskip("gemmi")
+    _require_assembly_coordinates()
     errors = []
     pairs = []
     for pid, parts in PISA_CUTS.items():
@@ -258,6 +285,8 @@ def test_entropy_model_reproduces_pisa_entropies():
 
 def test_entropy_model_beats_the_surrogate_it_replaces():
     """Guards against regressing to an area-based pseudo-entropy."""
+    pytest.importorskip("gemmi")
+    _require_assembly_coordinates()
     import statistics
 
     model, legacy, ref = [], [], []
@@ -287,6 +316,7 @@ def test_shipped_entropy_constant_matches_a_refit():
     hand-tweaked constant is caught here rather than in a paper.
     """
     pytest.importorskip("gemmi")
+    _require_assembly_coordinates()
     import importlib.util
 
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -337,6 +367,7 @@ def test_assembly_document_reports_the_pathway_entropy_not_a_sum():
     so entropy grew without bound with assembly size.
     """
     pytest.importorskip("gemmi")
+    _require_assembly_coordinates()
     doc = _fastpisa_assembly("8y5f")
     assert doc is not None
     tds = doc["entropy"]
@@ -351,6 +382,7 @@ def test_assembly_dissociation_energy_subtracts_the_entropy():
     ``dG_diss = -sum(cut stab) - T*dS``. The old code added it.
     """
     pytest.importorskip("gemmi")
+    _require_assembly_coordinates()
     import fastpisa
 
     cif = os.path.join(os.path.dirname(REF_JSON), "assemblies",
@@ -373,6 +405,7 @@ def test_assembly_dissociation_energy_subtracts_the_entropy():
 def test_assembly_entropy_tracks_pisa_across_the_reference_set():
     """Measured end to end on the assemblies PISA published numbers for."""
     pytest.importorskip("gemmi")
+    _require_assembly_coordinates()
     import statistics
 
     got, ref = [], []
@@ -421,6 +454,7 @@ def test_assembly_dissociation_energy_tracks_pisa_across_the_reference_set():
     different dissociation pathway than PISA's.
     """
     pytest.importorskip("gemmi")
+    _require_assembly_coordinates()
     import statistics
 
     got, ref = [], []
@@ -441,6 +475,7 @@ def test_assembly_dissociation_energy_tracks_pisa_across_the_reference_set():
 def test_dissociation_energy_beats_the_formula_it_replaces():
     """The old sum-everything-and-add-a-surrogate formula, for the record."""
     pytest.importorskip("gemmi")
+    _require_assembly_coordinates()
     import statistics
 
     from fastpisa.energy.energy import bond_energy

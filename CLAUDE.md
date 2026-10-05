@@ -467,6 +467,18 @@ A green run with `freesasa` installed does NOT cover the Python engine: the
 accuracy tests used to skip entirely when freesasa was absent, which is how a
 6x ASA error survived in the fallback. CI runs both legs.
 
+**A green local run does not mean green CI, because two data sets are
+gitignored.** `tests/data/reference/assemblies/` (4.6 MB of RCSB assembly
+mmCIF, refetched on demand) is present here and absent in a clean checkout,
+so the 8 end-to-end dissociation tests SKIP in CI and run only here -- they
+now say so instead of asserting `len(rows) == 13` against an empty list,
+which is how the first CI run of the crystal/assembly arc showed 8 red tests
+for a measurement that was fine. The same applies to anything needing
+`FASTPISA_EXTERNAL_CIF` or the CCP4 binary. Before concluding a test is
+green, check whether it skipped: `pytest tests/ -q -rs`. And when adding a
+test that reads a gitignored cache, make the absence a skip with the refetch
+command in the message, never a failed assertion.
+
 ## Linkage
 
 - PISA paper: Krissinel & Henrick, JMB 372:774–797 (2007). Schema: PDBe-KB/pdbe-pisa-json.
